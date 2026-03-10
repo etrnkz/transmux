@@ -191,6 +191,9 @@
                     updateProgress(progress);
                 });
                 
+                // Set up worker message handling
+                setupWorkerMessageHandling();
+                
                 setupEventListeners();
                 showStatus('Application initialized successfully!', 'info');
                 
@@ -205,6 +208,44 @@
                 console.error('Failed to initialize:', error);
                 showStatus('Failed to initialize application: ' + error.message, 'error');
             }
+        }
+        
+        function setupWorkerMessageHandling() {
+            // Get the worker from the Rust VideoProcessor and set up message handling
+            console.log('Setting up worker message handling...');
+            
+            // We'll set up the message handler after a short delay to ensure the worker is ready
+            setTimeout(() => {
+                try {
+                    const worker = videoProcessor.get_worker();
+                    if (worker) {
+                        worker.onmessage = function(event) {
+                            console.log('Worker message received:', event.data);
+                            
+                            // Handle the message using our JavaScript handler
+                            handleWorkerMessage(event);
+                            
+                            // Also call the Rust handler
+                            try {
+                                videoProcessor.handle_worker_message(event);
+                            } catch (error) {
+                                console.warn('Rust message handler error:', error);
+                            }
+                        };
+                        
+                        worker.onerror = function(error) {
+                            console.error('Worker error:', error);
+                            showStatus('Worker error occurred', 'error');
+                        };
+                        
+                        console.log('Worker message handlers set up successfully');
+                    } else {
+                        console.warn('No worker available for message handling');
+                    }
+                } catch (error) {
+                    console.error('Failed to set up worker message handling:', error);
+                }
+            }, 100);
         }
         
         function testWorkerConnection() {
@@ -361,20 +402,30 @@
                     break;
                     
                 case 'VIDEO_READY':
+                    console.log('VIDEO_READY received:', data);
                     const video = document.getElementById('videoPlayer');
-                    video.src = data.url;
-                    currentVideoUrl = data.url;
                     
-                    // Show additional info for converted videos
-                    if (data.converted) {
-                        const note = data.note || `Converted from ${data.originalFormat?.toUpperCase() || 'unknown'} to MP4`;
-                        showStatus(note, 'info');
+                    if (data.url) {
+                        console.log('Setting video source to:', data.url);
+                        video.src = data.url;
+                        currentVideoUrl = data.url;
+                        
+                        // Show additional info for converted videos
+                        if (data.converted) {
+                            const note = data.note || `Converted from ${data.originalFormat?.toUpperCase() || 'unknown'} to MP4`;
+                            showStatus(note, 'info');
+                        } else {
+                            showStatus('Video ready for playback', 'info');
+                        }
+                        
+                        hideProgress();
+                        showVideoContainer();
+                        
+                        console.log('Video container should now be visible');
                     } else {
-                        showStatus('Video ready for playback', 'info');
+                        console.error('VIDEO_READY message missing URL:', data);
+                        showStatus('Video processing completed but no URL provided', 'error');
                     }
-                    
-                    hideProgress();
-                    showVideoContainer();
                     break;
                     
                 case 'SUBTITLES_READY':

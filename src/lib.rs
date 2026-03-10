@@ -78,6 +78,11 @@ impl VideoProcessor {
         console_log!("VideoProcessor initialized");
         Ok(())
     }
+    
+    #[wasm_bindgen]
+    pub fn get_worker(&self) -> Option<Worker> {
+        self.worker.clone()
+    }
 
     #[wasm_bindgen]
     pub fn set_progress_callback(&mut self, callback: js_sys::Function) {
