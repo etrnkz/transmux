@@ -8,6 +8,8 @@ async function processVideoFile(file) {
     const extension = file.name.split('.').pop().toLowerCase();
     const fileSize = file.size;
     
+    console.log(`Simple worker processing: ${file.name}, extension: ${extension}`);
+    
     // Report initial progress
     self.postMessage({
         type: 'PROGRESS',
@@ -47,8 +49,14 @@ async function processVideoFile(file) {
     const nativeFormats = ['mp4', 'webm', 'ogg'];
     const convertibleFormats = ['avi', 'mkv', 'mov', 'wmv', 'flv'];
     
+    console.log(`Simple worker - Native formats: ${nativeFormats.join(', ')}`);
+    console.log(`Simple worker - Convertible formats: ${convertibleFormats.join(', ')}`);
+    console.log(`Simple worker - Is native: ${nativeFormats.includes(extension)}`);
+    console.log(`Simple worker - Is convertible: ${convertibleFormats.includes(extension)}`);
+    
     if (nativeFormats.includes(extension)) {
         // Direct playback - create blob URL
+        console.log(`Simple worker - Direct playback for ${extension}`);
         const url = URL.createObjectURL(file);
         
         self.postMessage({
@@ -62,6 +70,8 @@ async function processVideoFile(file) {
     } else if (convertibleFormats.includes(extension)) {
         // Simulate conversion by creating a mock MP4
         // In a real implementation, this would use FFmpeg.wasm or server-side conversion
+        
+        console.log(`Simple worker - Mock conversion for ${extension}`);
         
         // For demo purposes, we'll create a placeholder
         const mockMp4Data = new Uint8Array(1024); // Minimal mock data
@@ -79,6 +89,7 @@ async function processVideoFile(file) {
         });
         
     } else {
+        console.log(`Simple worker - Unsupported format: ${extension}`);
         self.postMessage({
             type: 'ERROR',
             message: `Unsupported format: ${extension.toUpperCase()}. Supported formats: MP4, WebM, OGG (direct), AVI, MKV, MOV, WMV, FLV (conversion demo).`

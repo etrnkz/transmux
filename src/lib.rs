@@ -64,11 +64,11 @@ impl VideoProcessor {
         
         let worker = match worker_result {
             Ok(w) => {
-                console_log!("FFmpeg worker initialized");
+                console_log!("✅ FFmpeg worker initialized successfully");
                 w
             },
-            Err(_) => {
-                console_log!("FFmpeg worker failed, using simple worker");
+            Err(e) => {
+                console_log!("❌ FFmpeg worker failed: {:?}, using simple worker", e);
                 Worker::new("./simple-video-worker.js")?
             }
         };

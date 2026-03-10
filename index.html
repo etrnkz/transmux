@@ -410,6 +410,12 @@
                         video.src = data.url;
                         currentVideoUrl = data.url;
                         
+                        // Set poster image if provided
+                        if (data.poster) {
+                            video.poster = data.poster;
+                            console.log('Setting video poster to:', data.poster);
+                        }
+                        
                         // Show additional info for converted videos
                         if (data.converted) {
                             const note = data.note || `Converted from ${data.originalFormat?.toUpperCase() || 'unknown'} to MP4`;
@@ -422,6 +428,21 @@
                         showVideoContainer();
                         
                         console.log('Video container should now be visible');
+                        
+                        // Add error handling for video load failures
+                        video.onerror = function(e) {
+                            console.error('Video load error:', e);
+                            showStatus(`Video format not supported by browser. Original format: ${data.originalFormat?.toUpperCase() || 'unknown'}`, 'warning');
+                        };
+                        
+                        video.onloadstart = function() {
+                            console.log('Video loading started');
+                        };
+                        
+                        video.oncanplay = function() {
+                            console.log('Video can start playing');
+                        };
+                        
                     } else {
                         console.error('VIDEO_READY message missing URL:', data);
                         showStatus('Video processing completed but no URL provided', 'error');
