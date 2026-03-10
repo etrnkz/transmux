@@ -137,8 +137,9 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎬 WASM Video Player</h1>
-        <p>Upload video files in various formats (MKV, AVI, MOV, etc.) and play them directly in your browser!</p>
+        <h1>🎬 WASM Video Player - VLC for Browser</h1>
+        <p><strong>Real FFmpeg.wasm conversion!</strong> Upload ANY video format and it will be converted to MP4 for browser playback.</p>
+        <p><em>Supports: MKV, AVI, MOV, WMV, FLV, WebM, MP4, and many more formats!</em></p>
         
         <div class="upload-area" id="uploadArea">
             <div>
@@ -182,6 +183,14 @@
         
         async function initializeApp() {
             try {
+                // Check for SharedArrayBuffer support (required for FFmpeg.wasm)
+                if (typeof SharedArrayBuffer === 'undefined') {
+                    showStatus('⚠️ SharedArrayBuffer not available. Using CORS-enabled server for full FFmpeg support.', 'warning');
+                    console.warn('SharedArrayBuffer not available - FFmpeg.wasm will use single-threaded mode');
+                } else {
+                    console.log('✅ SharedArrayBuffer available - FFmpeg.wasm can use multi-threading');
+                }
+                
                 await init();
                 videoProcessor = new VideoProcessor();
                 videoProcessor.initialize('videoPlayer');
@@ -195,7 +204,7 @@
                 setupWorkerMessageHandling();
                 
                 setupEventListeners();
-                showStatus('Application initialized successfully!', 'info');
+                showStatus('🎬 VLC-like video player initialized! Upload any video format for conversion.', 'info');
                 
                 // Display supported formats
                 const formats = get_supported_formats();

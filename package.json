@@ -5,7 +5,8 @@
   "main": "index.html",
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg",
-    "serve": "python -m http.server 8000",
+    "serve": "python server.py 8000",
+    "serve-basic": "python -m http.server 8000",
     "dev": "npm run build && npm run serve",
     "clean": "rm -rf pkg target",
     "setup-ffmpeg": "node setup-local-ffmpeg.js",

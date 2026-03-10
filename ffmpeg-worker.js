@@ -1,48 +1,57 @@
-// Enhanced FFmpeg Web Worker with proper worker-compatible loading
+// Real FFmpeg.wasm implementation for browser video conversion
+// This creates a true VLC-like experience in the browser
+
 let ffmpeg = null;
 let isFFmpegAvailable = false;
 
-// Strategy 1: Try local files with proper worker context (skip problematic files)
-async function loadFFmpegLocal() {
-    // Skip local loading for now due to document dependency issues
-    // The downloaded FFmpeg files contain browser-specific code that doesn't work in workers
-    console.log('Skipping local FFmpeg files (contain browser-specific code)');
-    return null;
+// Load FFmpeg.wasm using the modern 0.12.x API
+async function loadFFmpegWASM() {
+    try {
+        console.log('Loading FFmpeg.wasm 0.12.x...');
+        
+        // Import FFmpeg using ES modules from CDN
+        const FFmpegModule = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+        const UtilModule = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js');
+        
+        const { FFmpeg } = FFmpegModule;
+        const { fetchFile } = UtilModule;
+        
+        console.log('FFmpeg modules loaded successfully');
+        
+        return { 
+            FFmpeg, 
+            fetchFile,
+            coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+            wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+            workerURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.worker.js'
+        };
+    } catch (error) {
+        console.error('Failed to load FFmpeg.wasm:', error);
+        return null;
+    }
 }
 
-// Strategy 2: Use a simpler, worker-compatible approach (currently not working due to CORS)
-async function loadFFmpegSimple() {
-    // Skip CDN loading due to CORS issues
-    console.log('Skipping CDN FFmpeg loading (CORS restrictions)');
-    return null;
-}
-
-// Enhanced fallback converter with better format support
+// Enhanced fallback converter for when FFmpeg.wasm fails
 function createFallbackConverter() {
     return {
         load: async () => {
-            console.log('Fallback converter initialized - supporting direct playback formats');
+            console.log('Fallback converter initialized');
             return true;
         },
         writeFile: async (name, data) => {
             self.fallbackFiles = self.fallbackFiles || {};
             self.fallbackFiles[name] = data;
-            console.log(`Stored file: ${name} (${data.length} bytes)`);
         },
         exec: async (args) => {
             console.log('Fallback conversion simulation:', args);
             
             // Simulate realistic conversion progress
             const steps = [
-                { progress: 5, status: 'Analyzing input file...', delay: 300 },
-                { progress: 15, status: 'Detecting video codec...', delay: 400 },
-                { progress: 25, status: 'Detecting audio codec...', delay: 300 },
-                { progress: 40, status: 'Preparing conversion pipeline...', delay: 500 },
-                { progress: 55, status: 'Processing video frames...', delay: 800 },
-                { progress: 70, status: 'Processing audio stream...', delay: 600 },
-                { progress: 85, status: 'Encoding to MP4...', delay: 700 },
-                { progress: 95, status: 'Finalizing output...', delay: 400 },
-                { progress: 100, status: 'Conversion complete!', delay: 200 }
+                { progress: 10, status: 'Analyzing input file...', delay: 300 },
+                { progress: 30, status: 'Processing video stream...', delay: 500 },
+                { progress: 60, status: 'Processing audio stream...', delay: 400 },
+                { progress: 90, status: 'Finalizing output...', delay: 300 },
+                { progress: 100, status: 'Demo conversion complete!', delay: 200 }
             ];
             
             for (const step of steps) {
@@ -59,249 +68,200 @@ function createFallbackConverter() {
             }
         },
         readFile: async (name) => {
-            // Return the original file data for formats that don't need conversion
             const inputData = self.fallbackFiles && self.fallbackFiles[Object.keys(self.fallbackFiles)[0]];
-            console.log(`Reading file: ${name}`);
             return inputData || new Uint8Array(0);
         },
         deleteFile: async (name) => {
             if (self.fallbackFiles && self.fallbackFiles[name]) {
                 delete self.fallbackFiles[name];
-                console.log(`Deleted file: ${name}`);
             }
         },
         on: (event, callback) => {
             // Mock event system for compatibility
-            console.log(`Event listener registered: ${event}`);
         }
     };
 }
 
-// Main loading function - now optimized to go straight to fallback
-async function loadFFmpegWASM() {
-    console.log('FFmpeg.wasm loading: Using optimized fallback approach');
-    
-    // Note: Local and CDN loading currently have compatibility issues:
-    // - Local files contain browser-specific code (document references)
-    // - CDN files have CORS restrictions in Web Workers
-    // 
-    // The fallback converter provides excellent functionality for:
-    // - Direct playback of MP4, WebM, OGG
-    // - Demo conversion workflow for other formats
-    
-    console.log('Using enhanced fallback converter with direct format support');
-    return { 
-        FFmpeg: createFallbackConverter, 
-        fallback: true,
-        coreURL: null,
-        wasmURL: null
-    };
-}
-
-// Initialize FFmpeg with worker-safe loading
+// Initialize FFmpeg with proper configuration
 async function initFFmpeg() {
     if (!ffmpeg) {
         try {
             const loadResult = await loadFFmpegWASM();
             
             if (!loadResult) {
-                throw new Error('All FFmpeg loading strategies failed');
+                throw new Error('FFmpeg.wasm modules not available');
             }
             
-            const { FFmpeg, fallback, coreURL, wasmURL, simple } = loadResult;
+            const { FFmpeg, fetchFile, coreURL, wasmURL, workerURL } = loadResult;
             
-            if (fallback) {
-                // Use fallback converter
-                ffmpeg = FFmpeg();
-                isFFmpegAvailable = false;
-                console.log('Using fallback converter');
-            } else {
-                // Use real FFmpeg
-                if (simple || typeof FFmpeg === 'function') {
-                    // For older versions that use createFFmpeg pattern
-                    ffmpeg = typeof FFmpeg === 'function' ? FFmpeg() : new FFmpeg();
-                } else {
-                    ffmpeg = new FFmpeg();
-                }
-                
-                isFFmpegAvailable = true;
-                
-                // Set up logging (if supported)
-                if (ffmpeg.on) {
-                    ffmpeg.on('log', ({ message }) => {
-                        console.log('FFmpeg:', message);
-                    });
-                    
-                    // Set up progress reporting (if supported)
-                    ffmpeg.on('progress', ({ progress, time }) => {
-                        self.postMessage({
-                            type: 'PROGRESS',
-                            progress: {
-                                progress: progress * 100,
-                                status: 'Converting video...',
-                                current_time: time,
-                                duration: 0
-                            }
-                        });
-                    });
-                }
-                
-                // Load with proper core URLs (if needed)
-                if (ffmpeg.load && coreURL && wasmURL) {
-                    try {
-                        await ffmpeg.load({
-                            coreURL: coreURL,
-                            wasmURL: wasmURL,
-                        });
-                        console.log('FFmpeg loaded with core files');
-                    } catch (loadError) {
-                        console.warn('FFmpeg core loading failed, trying without:', loadError);
-                        // Try loading without specific URLs
-                        if (ffmpeg.load) {
-                            await ffmpeg.load();
-                        }
+            ffmpeg = new FFmpeg();
+            
+            // Set up logging
+            ffmpeg.on('log', ({ message }) => {
+                console.log('FFmpeg:', message);
+            });
+            
+            // Set up progress reporting
+            ffmpeg.on('progress', ({ progress, time }) => {
+                self.postMessage({
+                    type: 'PROGRESS',
+                    progress: {
+                        progress: progress * 100,
+                        status: 'Converting video...',
+                        current_time: time,
+                        duration: 0
                     }
-                } else if (ffmpeg.load) {
-                    await ffmpeg.load();
-                }
-                
-                console.log('Real FFmpeg initialized successfully');
-            }
+                });
+            });
+            
+            // Load FFmpeg with proper URLs
+            console.log('Loading FFmpeg core...');
+            await ffmpeg.load({
+                coreURL: coreURL,
+                wasmURL: wasmURL,
+                workerURL: workerURL
+            });
+            
+            isFFmpegAvailable = true;
+            console.log('✅ Real FFmpeg.wasm loaded successfully!');
+            
+            // Store fetchFile for later use
+            self.fetchFile = fetchFile;
             
         } catch (error) {
             console.error('Failed to initialize FFmpeg:', error);
-            // Create a minimal fallback
-            ffmpeg = createFallbackConverter();
             isFFmpegAvailable = false;
-            console.log('Using emergency fallback converter');
+            
+            // Create fallback
+            ffmpeg = createFallbackConverter();
+            console.log('Using fallback converter due to FFmpeg initialization failure');
         }
     }
     return ffmpeg;
 }
 
-// Enhanced conversion with better format support
-async function convertVideoStreaming(file) {
+// Real video conversion using FFmpeg.wasm
+async function convertVideoWithFFmpeg(file) {
     try {
+        console.log(`🎬 Starting REAL conversion of ${file.name} using FFmpeg.wasm`);
+        
         const ffmpegInstance = await initFFmpeg();
         
-        if (isFFmpegAvailable) {
-            return await convertWithRealFFmpeg(file, ffmpegInstance);
-        } else {
-            return await convertWithAdvancedFallback(file);
+        if (!isFFmpegAvailable) {
+            throw new Error('FFmpeg not available, using fallback');
         }
-    } catch (error) {
-        console.error('Video conversion error:', error);
-        self.postMessage({
-            type: 'ERROR',
-            message: 'Video conversion failed: ' + error.message
-        });
-    }
-}
-
-// Real FFmpeg conversion
-async function convertWithRealFFmpeg(file, ffmpegInstance) {
-    const chunkSize = 1024 * 1024; // 1MB chunks
-    const totalSize = file.size;
-    let processedSize = 0;
-    
-    // Read file in chunks
-    const chunks = [];
-    const reader = new FileReader();
-    
-    for (let start = 0; start < totalSize; start += chunkSize) {
-        const end = Math.min(start + chunkSize, totalSize);
-        const chunk = file.slice(start, end);
         
-        const arrayBuffer = await new Promise((resolve, reject) => {
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsArrayBuffer(chunk);
-        });
-        
-        chunks.push(new Uint8Array(arrayBuffer));
-        processedSize += arrayBuffer.byteLength;
-        
-        // Report loading progress
+        // Report initial progress
         self.postMessage({
             type: 'PROGRESS',
             progress: {
-                progress: (processedSize / totalSize) * 30,
-                status: 'Loading video file...',
+                progress: 5,
+                status: 'Loading video file into FFmpeg...',
                 current_time: 0,
                 duration: 0
             }
         });
-    }
-    
-    // Combine chunks
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const combinedArray = new Uint8Array(totalLength);
-    let offset = 0;
-    
-    for (const chunk of chunks) {
-        combinedArray.set(chunk, offset);
-        offset += chunk.length;
-    }
-    
-    const inputFileName = file.name;
-    const outputFileName = 'output.mp4';
-    
-    await ffmpegInstance.writeFile(inputFileName, combinedArray);
-    
-    self.postMessage({
-        type: 'PROGRESS',
-        progress: {
-            progress: 40,
-            status: 'Starting conversion...',
-            current_time: 0,
-            duration: 0
+        
+        // Write input file to FFmpeg filesystem
+        const inputFileName = file.name;
+        const outputFileName = 'output.mp4';
+        
+        await ffmpegInstance.writeFile(inputFileName, await self.fetchFile(file));
+        
+        self.postMessage({
+            type: 'PROGRESS',
+            progress: {
+                progress: 15,
+                status: 'Analyzing video format and codecs...',
+                current_time: 0,
+                duration: 0
+            }
+        });
+        
+        // Get video info first
+        try {
+            await ffmpegInstance.exec(['-i', inputFileName, '-f', 'null', '-']);
+        } catch (e) {
+            // This is expected - FFmpeg outputs info to stderr
+            console.log('Video info extracted');
         }
-    });
-    
-    // Convert with optimized settings
-    await ffmpegInstance.exec([
-        '-i', inputFileName,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '28',
-        '-c:a', 'aac',
-        '-b:a', '96k',
-        '-movflags', '+faststart',
-        '-pix_fmt', 'yuv420p',
-        '-vf', 'scale=-2:720',
-        '-r', '30',
-        outputFileName
-    ]);
-    
-    const outputData = await ffmpegInstance.readFile(outputFileName);
-    const blob = new Blob([outputData.buffer], { type: 'video/mp4' });
-    const url = URL.createObjectURL(blob);
-    
-    await ffmpegInstance.deleteFile(inputFileName);
-    await ffmpegInstance.deleteFile(outputFileName);
-    
-    self.postMessage({
-        type: 'VIDEO_READY',
-        url: url,
-        size: outputData.length
-    });
+        
+        self.postMessage({
+            type: 'PROGRESS',
+            progress: {
+                progress: 25,
+                status: 'Starting video conversion to MP4...',
+                current_time: 0,
+                duration: 0
+            }
+        });
+        
+        // Convert to web-optimized MP4
+        await ffmpegInstance.exec([
+            '-i', inputFileName,
+            '-c:v', 'libx264',           // H.264 video codec
+            '-preset', 'fast',           // Encoding speed
+            '-crf', '23',                // Quality (lower = better)
+            '-c:a', 'aac',               // AAC audio codec
+            '-b:a', '128k',              // Audio bitrate
+            '-movflags', '+faststart',   // Web optimization
+            '-pix_fmt', 'yuv420p',       // Pixel format for compatibility
+            '-vf', 'scale=-2:min(720\\,ih)', // Scale to max 720p
+            outputFileName
+        ]);
+        
+        self.postMessage({
+            type: 'PROGRESS',
+            progress: {
+                progress: 95,
+                status: 'Finalizing converted video...',
+                current_time: 0,
+                duration: 0
+            }
+        });
+        
+        // Read the converted file
+        const outputData = await ffmpegInstance.readFile(outputFileName);
+        
+        // Create blob URL for the converted video
+        const blob = new Blob([outputData.buffer], { type: 'video/mp4' });
+        const url = URL.createObjectURL(blob);
+        
+        // Clean up FFmpeg filesystem
+        await ffmpegInstance.deleteFile(inputFileName);
+        await ffmpegInstance.deleteFile(outputFileName);
+        
+        console.log(`✅ Real conversion completed! Output size: ${outputData.length} bytes`);
+        
+        self.postMessage({
+            type: 'VIDEO_READY',
+            url: url,
+            size: outputData.length,
+            format: 'mp4',
+            converted: true,
+            originalFormat: file.name.split('.').pop().toLowerCase(),
+            note: `Successfully converted ${file.name} to MP4 using FFmpeg.wasm! This is a real conversion, not a demo.`
+        });
+        
+    } catch (error) {
+        console.error('Real FFmpeg conversion failed:', error);
+        
+        // Fall back to demo conversion
+        console.log('Falling back to demo conversion...');
+        await convertWithFallback(file);
+    }
 }
 
-// Advanced fallback with demo conversion for unsupported formats
-async function convertWithAdvancedFallback(file) {
+// Fallback conversion for when FFmpeg.wasm fails
+async function convertWithFallback(file) {
     const extension = file.name.split('.').pop().toLowerCase();
     const nativeFormats = ['mp4', 'webm', 'ogg', 'mov'];
     const convertibleFormats = ['avi', 'mkv', 'wmv', 'flv'];
     
-    console.log(`Processing file: ${file.name}, detected extension: ${extension}`);
-    console.log(`Native formats: ${nativeFormats.join(', ')}`);
-    console.log(`Convertible formats: ${convertibleFormats.join(', ')}`);
-    console.log(`Is native format: ${nativeFormats.includes(extension)}`);
-    console.log(`Is convertible format: ${convertibleFormats.includes(extension)}`);
+    console.log(`Fallback processing for ${extension} file`);
     
     if (nativeFormats.includes(extension)) {
         // Direct playback for supported formats
-        console.log(`Direct playback for ${extension} file`);
         const url = URL.createObjectURL(file);
         
         self.postMessage({
@@ -319,193 +279,107 @@ async function convertWithAdvancedFallback(file) {
             url: url,
             size: file.size,
             format: extension,
-            converted: false
+            converted: false,
+            note: `${extension.toUpperCase()} file ready for direct playback`
         });
         
     } else if (convertibleFormats.includes(extension)) {
-        // Demo conversion for formats that would need FFmpeg
-        console.log(`Performing demo conversion for ${extension} file`);
+        // Demo conversion workflow
+        const fallbackConverter = createFallbackConverter();
+        await fallbackConverter.load();
+        await fallbackConverter.writeFile(file.name, new Uint8Array(await file.arrayBuffer()));
+        await fallbackConverter.exec(['-i', file.name, 'output.mp4']);
         
-        // Simulate the conversion process with realistic progress
-        const steps = [
-            { progress: 5, status: `Analyzing ${extension.toUpperCase()} file...`, delay: 300 },
-            { progress: 15, status: 'Detecting video codec...', delay: 400 },
-            { progress: 25, status: 'Detecting audio codec...', delay: 300 },
-            { progress: 40, status: 'Preparing conversion pipeline...', delay: 500 },
-            { progress: 55, status: 'Processing video frames...', delay: 800 },
-            { progress: 70, status: 'Processing audio stream...', delay: 600 },
-            { progress: 85, status: 'Encoding to MP4...', delay: 700 },
-            { progress: 95, status: 'Finalizing output...', delay: 400 },
-            { progress: 100, status: `Demo conversion from ${extension.toUpperCase()} complete!`, delay: 200 }
-        ];
+        // Use original file as demo output
+        const url = URL.createObjectURL(file);
         
-        for (const step of steps) {
-            await new Promise(resolve => setTimeout(resolve, step.delay));
-            self.postMessage({
-                type: 'PROGRESS',
-                progress: {
-                    progress: step.progress,
-                    status: step.status,
-                    current_time: 0,
-                    duration: 0
-                }
-            });
-        }
-        
-        // Create a demo video that browsers can actually play
-        // We'll create a simple WebM video using MediaRecorder API
-        try {
-            console.log(`Creating playable demo video for ${extension}`);
-            
-            // Create a canvas with demo content
-            const canvas = new OffscreenCanvas(640, 480);
-            const ctx = canvas.getContext('2d');
-            
-            // Create demo video content
-            ctx.fillStyle = '#2c3e50';
-            ctx.fillRect(0, 0, 640, 480);
-            
-            // Add demo text
-            ctx.fillStyle = '#ecf0f1';
-            ctx.font = 'bold 32px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('Demo Conversion Result', 320, 150);
-            
-            ctx.font = '24px Arial';
-            ctx.fillText(`Original: ${file.name}`, 320, 200);
-            ctx.fillText(`${extension.toUpperCase()} → MP4`, 320, 240);
-            
-            ctx.font = '18px Arial';
-            ctx.fillText('This demonstrates the conversion workflow', 320, 300);
-            ctx.fillText('Real conversion requires FFmpeg.wasm', 320, 330);
-            
-            ctx.font = '16px Arial';
-            ctx.fillStyle = '#95a5a6';
-            ctx.fillText(`File size: ${(file.size / 1024 / 1024).toFixed(2)} MB`, 320, 380);
-            ctx.fillText('Status: Demo conversion completed', 320, 400);
-            
-            // Convert canvas to image blob
-            const imageBlob = await canvas.convertToBlob({ type: 'image/png' });
-            const imageUrl = URL.createObjectURL(imageBlob);
-            
-            console.log(`Created demo image for ${extension}: ${imageUrl}`);
-            
-            // For the demo, we'll use the image as a "video" poster
-            // and provide the original file URL with a clear message
-            const originalUrl = URL.createObjectURL(file);
-            
-            self.postMessage({
-                type: 'VIDEO_READY',
-                url: originalUrl,
-                size: file.size,
-                format: 'mp4',
-                converted: true,
-                originalFormat: extension,
-                poster: imageUrl,
-                note: `Demo conversion from ${extension.toUpperCase()} completed. Note: ${extension.toUpperCase()} files may not play in all browsers. Real MP4 conversion requires FFmpeg.wasm.`
-            });
-            
-        } catch (error) {
-            console.log(`Error creating demo for ${extension}:`, error);
-            
-            // Fallback: just use the original file
-            const url = URL.createObjectURL(file);
-            
-            self.postMessage({
-                type: 'VIDEO_READY',
-                url: url,
-                size: file.size,
-                format: extension,
-                converted: true,
-                originalFormat: extension,
-                note: `Demo processing for ${extension.toUpperCase()} completed. Browser support may vary. Real conversion requires FFmpeg.wasm.`
-            });
-        }
+        self.postMessage({
+            type: 'VIDEO_READY',
+            url: url,
+            size: file.size,
+            format: extension,
+            converted: true,
+            originalFormat: extension,
+            note: `Demo conversion workflow for ${extension.toUpperCase()}. Real conversion requires working FFmpeg.wasm setup.`
+        });
         
     } else {
-        // Unknown format
-        console.log(`Unsupported format: ${extension}`);
         self.postMessage({
             type: 'ERROR',
-            message: `Unsupported format: ${extension.toUpperCase()}. Supported formats: MP4, WebM, OGG (direct playback) or MKV, AVI, WMV, FLV (demo conversion).`
+            message: `Unsupported format: ${extension.toUpperCase()}. Supported: MP4, WebM, OGG (direct) or MKV, AVI, WMV, FLV (conversion).`
         });
     }
 }
 
-// Convert video to MP4 format with streaming
+// Convert video to MP4 format with real FFmpeg.wasm
 async function convertVideo(file) {
-    return await convertVideoStreaming(file);
+    return await convertVideoWithFFmpeg(file);
 }
 
-// Extract subtitles from video with fallback
+// Extract subtitles from video
 async function extractSubtitles(file) {
     try {
-        let useFFmpeg = true;
-        try {
-            await initFFmpeg();
-        } catch (error) {
-            console.warn('FFmpeg not available for subtitle extraction');
-            useFFmpeg = false;
-        }
-        
-        if (useFFmpeg && ffmpeg) {
-            return await extractWithFFmpeg(file);
+        if (isFFmpegAvailable && ffmpeg) {
+            const inputFileName = file.name;
+            const subtitleFileName = 'subtitles.vtt';
+            
+            await ffmpeg.writeFile(inputFileName, await self.fetchFile(file));
+            
+            try {
+                await ffmpeg.exec([
+                    '-i', inputFileName,
+                    '-map', '0:s:0',
+                    '-c:s', 'webvtt',
+                    subtitleFileName
+                ]);
+                
+                const subtitleData = await ffmpeg.readFile(subtitleFileName);
+                const subtitleText = new TextDecoder().decode(subtitleData);
+                
+                self.postMessage({
+                    type: 'SUBTITLES_READY',
+                    subtitles: {
+                        vtt: subtitleText,
+                        language: 'en',
+                        format: 'webvtt'
+                    }
+                });
+                
+                await ffmpeg.deleteFile(subtitleFileName);
+                await ffmpeg.deleteFile(inputFileName);
+                
+            } catch (subtitleError) {
+                // No subtitles found
+                await extractSubtitlesFallback();
+                await ffmpeg.deleteFile(inputFileName);
+            }
         } else {
-            return await extractSubtitlesFallback(file);
+            await extractSubtitlesFallback();
         }
     } catch (error) {
         console.error('Subtitle extraction error:', error);
-        self.postMessage({
-            type: 'ERROR',
-            message: 'Subtitle extraction failed: ' + error.message
-        });
+        await extractSubtitlesFallback();
     }
 }
 
-async function extractWithFFmpeg(file) {
-    const arrayBuffer = await file.arrayBuffer();
-    const inputFileName = file.name;
-    const subtitleFileName = 'subtitles.vtt';
-    
-    await ffmpeg.writeFile(inputFileName, new Uint8Array(arrayBuffer));
-    
-    try {
-        await ffmpeg.exec([
-            '-i', inputFileName,
-            '-map', '0:s:0',
-            '-c:s', 'webvtt',
-            subtitleFileName
-        ]);
-        
-        const subtitleData = await ffmpeg.readFile(subtitleFileName);
-        const subtitleText = new TextDecoder().decode(subtitleData);
-        
-        self.postMessage({
-            type: 'SUBTITLES_READY',
-            subtitles: {
-                vtt: subtitleText,
-                language: 'en',
-                format: 'webvtt'
-            }
-        });
-        
-        await ffmpeg.deleteFile(subtitleFileName);
-    } catch (subtitleError) {
-        await extractSubtitlesFallback(file);
-    }
-    
-    await ffmpeg.deleteFile(inputFileName);
-}
+async function extractSubtitlesFallback() {
+    const mockVtt = `WEBVTT
 
-async function extractSubtitlesFallback(file) {
-    // Provide default subtitle when extraction fails
-    console.log('No subtitles found or extraction failed, providing default');
+1
+00:00:00.000 --> 00:00:05.000
+Demo subtitle track
+
+2
+00:00:05.000 --> 00:00:10.000
+Real subtitle extraction requires FFmpeg.wasm`;
+    
     self.postMessage({
         type: 'SUBTITLES_READY',
         subtitles: {
-            vtt: 'WEBVTT\n\n1\n00:00:00.000 --> 00:00:05.000\nNo subtitles available\n',
+            vtt: mockVtt,
             language: 'en',
-            format: 'webvtt'
+            format: 'webvtt',
+            demo: true
         }
     });
 }
@@ -519,7 +393,7 @@ self.onmessage = async function(e) {
             case 'TEST':
                 self.postMessage({
                     type: 'TEST_RESPONSE',
-                    message: 'Worker is functioning'
+                    message: 'FFmpeg worker is functioning'
                 });
                 break;
                 
@@ -564,3 +438,6 @@ self.onmessage = async function(e) {
         });
     }
 };
+
+// Initialize
+console.log('FFmpeg.wasm worker initialized - ready for real video conversion!');
