@@ -1,6 +1,5 @@
 use wasm_bindgen::prelude::*;
 use web_sys::*;
-use js_sys::*;
 use serde::{Deserialize, Serialize};
 
 // Import console.log for debugging
@@ -155,7 +154,7 @@ impl VideoProcessor {
             
             track.set_kind("subtitles");
             track.set_label("Extracted Subtitles");
-            track.set_src_lang("en");
+            track.set_srclang("en");
             track.set_default(true);
             
             // Convert subtitle data to VTT format and create blob URL
