@@ -7,7 +7,9 @@
     "build": "wasm-pack build --target web --out-dir pkg",
     "serve": "python -m http.server 8000",
     "dev": "npm run build && npm run serve",
-    "clean": "rm -rf pkg target"
+    "clean": "rm -rf pkg target",
+    "setup-ffmpeg": "node setup-local-ffmpeg.js",
+    "setup": "npm run setup-ffmpeg && npm run build"
   },
   "keywords": [
     "rust",
@@ -21,5 +23,8 @@
   "license": "MIT",
   "devDependencies": {
     "wasm-pack": "^0.12.1"
+  },
+  "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15"
   }
 }
