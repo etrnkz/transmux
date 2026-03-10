@@ -209,19 +209,65 @@
         
         function testWorkerConnection() {
             try {
-                const testWorker = new Worker('./ffmpeg-worker.js');
-                testWorker.postMessage({ type: 'TEST' });
-                testWorker.onmessage = function(e) {
-                    console.log('Worker test successful');
-                    testWorker.terminate();
+                // Try FFmpeg worker first
+                const ffmpegWorker = new Worker('./ffmpeg-worker.js');
+                ffmpegWorker.postMessage({ type: 'TEST' });
+                
+                let ffmpegWorked = false;
+                
+                ffmpegWorker.onmessage = function(e) {
+                    if (e.data.type === 'TEST_RESPONSE') {
+                        console.log('FFmpeg worker test successful');
+                        ffmpegWorked = true;
+                        ffmpegWorker.terminate();
+                    }
                 };
-                testWorker.onerror = function(error) {
-                    console.warn('Worker test failed:', error);
-                    showStatus('Video processing may be limited due to worker issues', 'info');
-                    testWorker.terminate();
+                
+                ffmpegWorker.onerror = function(error) {
+                    console.warn('FFmpeg worker test failed:', error);
+                    if (!ffmpegWorked) {
+                        testSimpleWorker();
+                    }
+                    ffmpegWorker.terminate();
                 };
+                
+                // Timeout fallback
+                setTimeout(() => {
+                    if (!ffmpegWorked) {
+                        console.log('FFmpeg worker timeout, trying simple worker');
+                        ffmpegWorker.terminate();
+                        testSimpleWorker();
+                    }
+                }, 3000);
+                
             } catch (error) {
-                console.warn('Worker initialization test failed:', error);
+                console.warn('FFmpeg worker initialization failed:', error);
+                testSimpleWorker();
+            }
+        }
+        
+        function testSimpleWorker() {
+            try {
+                const simpleWorker = new Worker('./simple-video-worker.js');
+                simpleWorker.postMessage({ type: 'TEST' });
+                
+                simpleWorker.onmessage = function(e) {
+                    if (e.data.type === 'TEST_RESPONSE') {
+                        console.log('Simple worker test successful');
+                        showStatus('Using simple video processor (limited conversion support)', 'info');
+                    }
+                    simpleWorker.terminate();
+                };
+                
+                simpleWorker.onerror = function(error) {
+                    console.warn('Simple worker test failed:', error);
+                    showStatus('Worker initialization failed - some features may not work', 'error');
+                    simpleWorker.terminate();
+                };
+                
+            } catch (error) {
+                console.warn('Simple worker initialization failed:', error);
+                showStatus('No workers available - upload functionality limited', 'error');
             }
         }
         
@@ -302,6 +348,77 @@
                     }, 1000);
                 }
             }
+        }
+        
+        // Enhanced message handling for different worker types
+        function handleWorkerMessage(event) {
+            const data = event.data;
+            const messageType = data.type;
+
+            switch (messageType) {
+                case 'PROGRESS':
+                    updateProgress(data.progress);
+                    break;
+                    
+                case 'VIDEO_READY':
+                    const video = document.getElementById('videoPlayer');
+                    video.src = data.url;
+                    currentVideoUrl = data.url;
+                    
+                    // Show additional info for converted videos
+                    if (data.converted) {
+                        const note = data.note || `Converted from ${data.originalFormat?.toUpperCase() || 'unknown'} to MP4`;
+                        showStatus(note, 'info');
+                    } else {
+                        showStatus('Video ready for playback', 'info');
+                    }
+                    
+                    hideProgress();
+                    showVideoContainer();
+                    break;
+                    
+                case 'SUBTITLES_READY':
+                    loadSubtitles(data.subtitles);
+                    if (data.subtitles.demo) {
+                        showStatus('Demo subtitles loaded (real extraction requires FFmpeg)', 'info');
+                    }
+                    break;
+                    
+                case 'ERROR':
+                    showStatus(data.message, 'error');
+                    hideProgress();
+                    break;
+                    
+                case 'WORKER_READY':
+                    console.log('Worker ready:', data.message);
+                    break;
+                    
+                default:
+                    console.log('Unknown worker message:', messageType, data);
+            }
+        }
+        
+        function loadSubtitles(subtitlesData) {
+            const video = document.getElementById('videoPlayer');
+            
+            // Remove existing tracks
+            const existingTracks = video.querySelectorAll('track');
+            existingTracks.forEach(track => track.remove());
+            
+            // Create new track element
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = subtitlesData.demo ? 'Demo Subtitles' : 'Extracted Subtitles';
+            track.srclang = subtitlesData.language || 'en';
+            track.default = true;
+            
+            // Create blob URL for VTT content
+            const blob = new Blob([subtitlesData.vtt], { type: 'text/vtt' });
+            const url = URL.createObjectURL(blob);
+            track.src = url;
+            
+            video.appendChild(track);
+            console.log('Subtitles loaded');
         }
         
         function showProgress() {

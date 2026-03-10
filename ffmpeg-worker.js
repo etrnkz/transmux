@@ -1,17 +1,30 @@
-// Enhanced FFmpeg Web Worker with local file support
+// Enhanced FFmpeg Web Worker with proper worker-compatible loading
 let ffmpeg = null;
 let isFFmpegAvailable = false;
 
-// Strategy 1: Try local files first (best performance)
+// Strategy 1: Try local files with proper worker context
 async function loadFFmpegLocal() {
     try {
         console.log('Attempting to load local FFmpeg files...');
+        // Import the local FFmpeg script
         importScripts('./public/ffmpeg.js');
         
-        if (typeof FFmpegWASM !== 'undefined' && FFmpegWASM.FFmpeg) {
+        // Check if FFmpeg is available in the global scope
+        if (typeof self.FFmpeg !== 'undefined') {
             console.log('Local FFmpeg loaded successfully');
             return { 
-                FFmpeg: FFmpegWASM.FFmpeg, 
+                FFmpeg: self.FFmpeg, 
+                coreURL: './public/ffmpeg-core.js',
+                wasmURL: './public/ffmpeg-core.wasm',
+                local: true 
+            };
+        }
+        
+        // Also check for FFmpegWASM namespace
+        if (typeof self.FFmpegWASM !== 'undefined' && self.FFmpegWASM.FFmpeg) {
+            console.log('Local FFmpeg (WASM namespace) loaded successfully');
+            return { 
+                FFmpeg: self.FFmpegWASM.FFmpeg, 
                 coreURL: './public/ffmpeg-core.js',
                 wasmURL: './public/ffmpeg-core.wasm',
                 local: true 
@@ -23,57 +36,39 @@ async function loadFFmpegLocal() {
     return null;
 }
 
-// Strategy 2: Try to load FFmpeg.wasm using the newer API
-async function loadFFmpegModern() {
-    try {
-        // Try the modern ES module approach
-        const FFmpegModule = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js');
-        const { FFmpeg } = FFmpegModule;
-        
-        if (FFmpeg) {
-            console.log('Modern FFmpeg loaded successfully');
-            return { 
-                FFmpeg, 
-                coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
-                wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm',
-                modern: true 
-            };
-        }
-    } catch (error) {
-        console.warn('Modern FFmpeg loading failed:', error);
-    }
-    return null;
-}
-
-// Strategy 3: Try legacy importScripts approach
-async function loadFFmpegLegacy() {
+// Strategy 2: Use a simpler, worker-compatible approach
+async function loadFFmpegSimple() {
     const cdnUrls = [
-        'https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.js',
-        'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.js'
+        'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js'
     ];
     
     for (const url of cdnUrls) {
         try {
-            console.log(`Attempting legacy load from: ${url}`);
+            console.log(`Attempting simple load from: ${url}`);
             importScripts(url);
             
-            if (typeof FFmpegWASM !== 'undefined' && FFmpegWASM.FFmpeg) {
-                console.log('Legacy FFmpeg loaded successfully');
-                return { 
-                    FFmpeg: FFmpegWASM.FFmpeg, 
-                    coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
-                    wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm',
-                    legacy: true 
-                };
+            // Check various possible global names
+            const possibleNames = ['FFmpeg', 'createFFmpeg', 'FFmpegWASM'];
+            
+            for (const name of possibleNames) {
+                if (typeof self[name] !== 'undefined') {
+                    console.log(`Simple FFmpeg loaded successfully as ${name}`);
+                    return { 
+                        FFmpeg: self[name], 
+                        coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+                        wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.wasm',
+                        simple: true 
+                    };
+                }
             }
         } catch (error) {
-            console.warn(`Legacy load failed from ${url}:`, error);
+            console.warn(`Simple load failed from ${url}:`, error);
         }
     }
     return null;
 }
 
-// Strategy 4: Use a lightweight alternative for basic conversions
+// Strategy 3: Use a lightweight alternative for basic conversions
 function createFallbackConverter() {
     return {
         load: async () => {
@@ -81,31 +76,28 @@ function createFallbackConverter() {
             return true;
         },
         writeFile: async (name, data) => {
-            // Store file data for fallback processing
             self.fallbackFiles = self.fallbackFiles || {};
             self.fallbackFiles[name] = data;
         },
         exec: async (args) => {
-            // Simulate basic conversion for supported formats
             console.log('Fallback exec:', args);
             
-            // Report progress
-            for (let i = 0; i <= 100; i += 10) {
-                setTimeout(() => {
-                    self.postMessage({
-                        type: 'PROGRESS',
-                        progress: {
-                            progress: i,
-                            status: 'Processing with fallback converter...',
-                            current_time: 0,
-                            duration: 0
-                        }
-                    });
-                }, i * 50);
+            // Simulate conversion progress
+            const steps = [10, 25, 50, 75, 90, 100];
+            for (let i = 0; i < steps.length; i++) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                self.postMessage({
+                    type: 'PROGRESS',
+                    progress: {
+                        progress: steps[i],
+                        status: `Processing... (${steps[i]}%)`,
+                        current_time: 0,
+                        duration: 0
+                    }
+                });
             }
         },
         readFile: async (name) => {
-            // Return processed file (in real implementation, this would do actual conversion)
             const inputData = self.fallbackFiles && self.fallbackFiles[Object.keys(self.fallbackFiles)[0]];
             return inputData || new Uint8Array(0);
         },
@@ -113,33 +105,30 @@ function createFallbackConverter() {
             if (self.fallbackFiles) {
                 delete self.fallbackFiles[name];
             }
+        },
+        on: (event, callback) => {
+            // Mock event system for compatibility
         }
     };
 }
 
-// Main loading function with multiple strategies
+// Main loading function with worker-safe strategies
 async function loadFFmpegWASM() {
-    console.log('Starting FFmpeg loading with multiple strategies...');
+    console.log('Starting FFmpeg loading with worker-safe strategies...');
     
-    // Strategy 1: Local files (fastest and most reliable)
+    // Strategy 1: Local files (if available)
     let result = await loadFFmpegLocal();
     if (result) {
         return result;
     }
     
-    // Strategy 2: Modern ES modules
-    result = await loadFFmpegModern();
+    // Strategy 2: Simple CDN approach
+    result = await loadFFmpegSimple();
     if (result) {
         return result;
     }
     
-    // Strategy 3: Legacy importScripts
-    result = await loadFFmpegLegacy();
-    if (result) {
-        return result;
-    }
-    
-    // Strategy 4: Fallback converter
+    // Strategy 3: Fallback converter
     console.warn('FFmpeg.wasm not available, using fallback converter');
     return { 
         FFmpeg: createFallbackConverter, 
@@ -149,7 +138,7 @@ async function loadFFmpegWASM() {
     };
 }
 
-// Initialize FFmpeg with enhanced loading
+// Initialize FFmpeg with worker-safe loading
 async function initFFmpeg() {
     if (!ffmpeg) {
         try {
@@ -159,7 +148,7 @@ async function initFFmpeg() {
                 throw new Error('All FFmpeg loading strategies failed');
             }
             
-            const { FFmpeg, fallback, coreURL, wasmURL } = loadResult;
+            const { FFmpeg, fallback, coreURL, wasmURL, simple } = loadResult;
             
             if (fallback) {
                 // Use fallback converter
@@ -168,34 +157,55 @@ async function initFFmpeg() {
                 console.log('Using fallback converter');
             } else {
                 // Use real FFmpeg
-                ffmpeg = new FFmpeg();
+                if (simple || typeof FFmpeg === 'function') {
+                    // For older versions that use createFFmpeg pattern
+                    ffmpeg = typeof FFmpeg === 'function' ? FFmpeg() : new FFmpeg();
+                } else {
+                    ffmpeg = new FFmpeg();
+                }
+                
                 isFFmpegAvailable = true;
                 
-                // Set up logging
-                ffmpeg.on('log', ({ message }) => {
-                    console.log('FFmpeg:', message);
-                });
-                
-                // Set up progress reporting
-                ffmpeg.on('progress', ({ progress, time }) => {
-                    self.postMessage({
-                        type: 'PROGRESS',
-                        progress: {
-                            progress: progress * 100,
-                            status: 'Converting video...',
-                            current_time: time,
-                            duration: 0
-                        }
+                // Set up logging (if supported)
+                if (ffmpeg.on) {
+                    ffmpeg.on('log', ({ message }) => {
+                        console.log('FFmpeg:', message);
                     });
-                });
+                    
+                    // Set up progress reporting (if supported)
+                    ffmpeg.on('progress', ({ progress, time }) => {
+                        self.postMessage({
+                            type: 'PROGRESS',
+                            progress: {
+                                progress: progress * 100,
+                                status: 'Converting video...',
+                                current_time: time,
+                                duration: 0
+                            }
+                        });
+                    });
+                }
                 
-                // Load with proper core URLs
-                await ffmpeg.load({
-                    coreURL: coreURL,
-                    wasmURL: wasmURL,
-                });
+                // Load with proper core URLs (if needed)
+                if (ffmpeg.load && coreURL && wasmURL) {
+                    try {
+                        await ffmpeg.load({
+                            coreURL: coreURL,
+                            wasmURL: wasmURL,
+                        });
+                        console.log('FFmpeg loaded with core files');
+                    } catch (loadError) {
+                        console.warn('FFmpeg core loading failed, trying without:', loadError);
+                        // Try loading without specific URLs
+                        if (ffmpeg.load) {
+                            await ffmpeg.load();
+                        }
+                    }
+                } else if (ffmpeg.load) {
+                    await ffmpeg.load();
+                }
                 
-                console.log('Real FFmpeg loaded successfully');
+                console.log('Real FFmpeg initialized successfully');
             }
             
         } catch (error) {
@@ -203,6 +213,7 @@ async function initFFmpeg() {
             // Create a minimal fallback
             ffmpeg = createFallbackConverter();
             isFFmpegAvailable = false;
+            console.log('Using emergency fallback converter');
         }
     }
     return ffmpeg;

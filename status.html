@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Player Status</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .status-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status-good { border-left: 5px solid #28a745; }
+        .status-warning { border-left: 5px solid #ffc107; }
+        .status-error { border-left: 5px solid #dc3545; }
+        .status-info { border-left: 5px solid #17a2b8; }
+        
+        .test-button {
+            background: #007bff;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover { background: #0056b3; }
+        
+        .log {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th { background-color: #f8f9fa; }
+        
+        .icon { font-size: 1.2em; margin-right: 8px; }
+        .good { color: #28a745; }
+        .warning { color: #ffc107; }
+        .error { color: #dc3545; }
+    </style>
+</head>
+<body>
+    <h1>🎬 Video Player System Status</h1>
+    
+    <div class="status-card status-info">
+        <h2><span class="icon">ℹ️</span>System Overview</h2>
+        <p>This page shows the current status of all video player components and helps diagnose issues.</p>
+        <button class="test-button" onclick="runAllTests()">Run All Tests</button>
+        <button class="test-button" onclick="clearLog()">Clear Log</button>
+    </div>
+    
+    <div class="status-card" id="wasmStatus">
+        <h2><span class="icon">🦀</span>WebAssembly Status</h2>
+        <p id="wasmResult">Testing...</p>
+        <button class="test-button" onclick="testWasm()">Test WASM</button>
+    </div>
+    
+    <div class="status-card" id="workerStatus">
+        <h2><span class="icon">⚙️</span>Web Worker Status</h2>
+        <p id="workerResult">Testing...</p>
+        <button class="test-button" onclick="testWorkers()">Test Workers</button>
+        <div id="workerDetails"></div>
+    </div>
+    
+    <div class="status-card" id="ffmpegStatus">
+        <h2><span class="icon">🎞️</span>FFmpeg.wasm Status</h2>
+        <p id="ffmpegResult">Testing...</p>
+        <button class="test-button" onclick="testFFmpeg()">Test FFmpeg</button>
+    </div>
+    
+    <div class="status-card status-info">
+        <h2><span class="icon">📋</span>Format Support Matrix</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Format</th>
+                    <th>Direct Playback</th>
+                    <th>FFmpeg Required</th>
+                    <th>Current Status</th>
+                </tr>
+            </thead>
+            <tbody id="formatTable">
+                <tr><td>MP4</td><td>✅ Yes</td><td>❌ No</td><td id="mp4Status">Ready</td></tr>
+                <tr><td>WebM</td><td>✅ Yes</td><td>❌ No</td><td id="webmStatus">Ready</td></tr>
+                <tr><td>OGG</td><td>✅ Yes</td><td>❌ No</td><td id="oggStatus">Ready</td></tr>
+                <tr><td>MKV</td><td>❌ No</td><td>✅ Yes</td><td id="mkvStatus">Testing...</td></tr>
+                <tr><td>AVI</td><td>❌ No</td><td>✅ Yes</td><td id="aviStatus">Testing...</td></tr>
+                <tr><td>MOV</td><td>⚠️ Maybe</td><td>⚠️ Maybe</td><td id="movStatus">Testing...</td></tr>
+                <tr><td>WMV</td><td>❌ No</td><td>✅ Yes</td><td id="wmvStatus">Testing...</td></tr>
+                <tr><td>FLV</td><td>❌ No</td><td>✅ Yes</td><td id="flvStatus">Testing...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div class="status-card status-info">
+        <h2><span class="icon">📝</span>System Log</h2>
+        <div id="systemLog" class="log">System starting...\n</div>
+    </div>
+    
+    <div class="status-card status-info">
+        <h2><span class="icon">🔧</span>Quick Fixes</h2>
+        <ul>
+            <li><strong>FFmpeg not loading:</strong> Run <code>npm run setup-ffmpeg</code> to download files locally</li>
+            <li><strong>Worker errors:</strong> Check that you're using HTTP server (not file://)</li>
+            <li><strong>CORS issues:</strong> Use <code>npm run serve</code> to start proper server</li>
+            <li><strong>Format not supported:</strong> Try MP4, WebM, or OGG for direct playback</li>
+        </ul>
+        
+        <h3>Available Actions:</h3>
+        <button class="test-button" onclick="window.open('index.html', '_blank')">Open Main Player</button>
+        <button class="test-button" onclick="window.open('test-streaming.html', '_blank')">Open Test Page</button>
+        <button class="test-button" onclick="window.open('demo.html', '_blank')">Open Demo Guide</button>
+    </div>
+
+    <script type="module">
+        import init, { VideoProcessor, get_supported_formats, is_format_supported } from './pkg/wasm_video_player.js';
+        
+        let videoProcessor;
+        let systemReady = false;
+        
+        function log(message) {
+            const logElement = document.getElementById('systemLog');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.innerHTML += `[${timestamp}] ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+        
+        window.log = log;
+        window.clearLog = () => {
+            document.getElementById('systemLog').innerHTML = 'Log cleared.\n';
+        };
+        
+        async function testWasm() {
+            const statusCard = document.getElementById('wasmStatus');
+            const result = document.getElementById('wasmResult');
+            
+            try {
+                log('Testing WebAssembly initialization...');
+                await init();
+                
+                videoProcessor = new VideoProcessor();
+                
+                const formats = get_supported_formats();
+                log(`WASM loaded successfully. Supported formats: ${formats.join(', ')}`);
+                
+                result.innerHTML = '<span class="good">✅ WebAssembly loaded successfully</span>';
+                statusCard.className = 'status-card status-good';
+                systemReady = true;
+                
+                return true;
+            } catch (error) {
+                log(`WASM initialization failed: ${error.message}`);
+                result.innerHTML = `<span class="error">❌ WebAssembly failed: ${error.message}</span>`;
+                statusCard.className = 'status-card status-error';
+                return false;
+            }
+        }
+        
+        async function testWorkers() {
+            const statusCard = document.getElementById('workerStatus');
+            const result = document.getElementById('workerResult');
+            const details = document.getElementById('workerDetails');
+            
+            log('Testing Web Workers...');
+            
+            const workers = [
+                { name: 'FFmpeg Worker', file: './ffmpeg-worker.js' },
+                { name: 'Simple Worker', file: './simple-video-worker.js' }
+            ];
+            
+            let workingWorkers = 0;
+            let workerDetails = '<h4>Worker Test Results:</h4><ul>';
+            
+            for (const workerInfo of workers) {
+                try {
+                    const worker = new Worker(workerInfo.file);
+                    
+                    const testResult = await new Promise((resolve) => {
+                        const timeout = setTimeout(() => resolve(false), 3000);
+                        
+                        worker.onmessage = (e) => {
+                            if (e.data.type === 'TEST_RESPONSE' || e.data.type === 'WORKER_READY') {
+                                clearTimeout(timeout);
+                                resolve(true);
+                            }
+                        };
+                        
+                        worker.onerror = () => {
+                            clearTimeout(timeout);
+                            resolve(false);
+                        };
+                        
+                        worker.postMessage({ type: 'TEST' });
+                    });
+                    
+                    worker.terminate();
+                    
+                    if (testResult) {
+                        workingWorkers++;
+                        workerDetails += `<li><span class="good">✅ ${workerInfo.name}</span></li>`;
+                        log(`${workerInfo.name} test passed`);
+                    } else {
+                        workerDetails += `<li><span class="error">❌ ${workerInfo.name} (timeout)</span></li>`;
+                        log(`${workerInfo.name} test failed (timeout)`);
+                    }
+                    
+                } catch (error) {
+                    workerDetails += `<li><span class="error">❌ ${workerInfo.name} (${error.message})</span></li>`;
+                    log(`${workerInfo.name} test failed: ${error.message}`);
+                }
+            }
+            
+            workerDetails += '</ul>';
+            details.innerHTML = workerDetails;
+            
+            if (workingWorkers > 0) {
+                result.innerHTML = `<span class="good">✅ ${workingWorkers}/${workers.length} workers functional</span>`;
+                statusCard.className = workingWorkers === workers.length ? 'status-card status-good' : 'status-card status-warning';
+            } else {
+                result.innerHTML = '<span class="error">❌ No workers functional</span>';
+                statusCard.className = 'status-card status-error';
+            }
+            
+            return workingWorkers > 0;
+        }
+        
+        async function testFFmpeg() {
+            const statusCard = document.getElementById('ffmpegStatus');
+            const result = document.getElementById('ffmpegResult');
+            
+            log('Testing FFmpeg.wasm availability...');
+            
+            try {
+                const worker = new Worker('./ffmpeg-worker.js');
+                
+                const ffmpegResult = await new Promise((resolve) => {
+                    const timeout = setTimeout(() => resolve({ success: false, message: 'Timeout' }), 10000);
+                    
+                    worker.onmessage = (e) => {
+                        if (e.data.type === 'FFMPEG_TEST_RESULT') {
+                            clearTimeout(timeout);
+                            resolve({ success: true, message: e.data.message });
+                        }
+                    };
+                    
+                    worker.onerror = (error) => {
+                        clearTimeout(timeout);
+                        resolve({ success: false, message: error.message });
+                    };
+                    
+                    worker.postMessage({ type: 'TEST_FFMPEG' });
+                });
+                
+                worker.terminate();
+                
+                if (ffmpegResult.success) {
+                    result.innerHTML = `<span class="good">✅ ${ffmpegResult.message}</span>`;
+                    statusCard.className = 'status-card status-good';
+                    log(`FFmpeg test passed: ${ffmpegResult.message}`);
+                    
+                    // Update format status
+                    updateFormatStatus(true);
+                } else {
+                    result.innerHTML = `<span class="warning">⚠️ FFmpeg fallback mode: ${ffmpegResult.message}</span>`;
+                    statusCard.className = 'status-card status-warning';
+                    log(`FFmpeg test failed: ${ffmpegResult.message}`);
+                    
+                    // Update format status
+                    updateFormatStatus(false);
+                }
+                
+            } catch (error) {
+                result.innerHTML = `<span class="error">❌ FFmpeg test failed: ${error.message}</span>`;
+                statusCard.className = 'status-card status-error';
+                log(`FFmpeg test error: ${error.message}`);
+                updateFormatStatus(false);
+            }
+        }
+        
+        function updateFormatStatus(ffmpegAvailable) {
+            const formats = ['mkv', 'avi', 'mov', 'wmv', 'flv'];
+            
+            formats.forEach(format => {
+                const statusElement = document.getElementById(`${format}Status`);
+                if (ffmpegAvailable) {
+                    statusElement.innerHTML = '<span class="good">✅ Conversion available</span>';
+                } else {
+                    statusElement.innerHTML = '<span class="warning">⚠️ Demo only</span>';
+                }
+            });
+        }
+        
+        window.testWasm = testWasm;
+        window.testWorkers = testWorkers;
+        window.testFFmpeg = testFFmpeg;
+        
+        window.runAllTests = async () => {
+            log('Running comprehensive system test...');
+            
+            const wasmOk = await testWasm();
+            const workersOk = await testWorkers();
+            await testFFmpeg();
+            
+            if (wasmOk && workersOk) {
+                log('✅ System test completed - All core components functional');
+            } else {
+                log('⚠️ System test completed - Some components have issues');
+            }
+        };
+        
+        // Auto-run tests on load
+        window.addEventListener('load', () => {
+            log('Status page loaded, running initial tests...');
+            setTimeout(window.runAllTests, 1000);
+        });
+    </script>
+</body>
+</html>
