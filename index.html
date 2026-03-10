@@ -198,9 +198,30 @@
                 const formats = get_supported_formats();
                 console.log('Supported formats:', formats);
                 
+                // Test worker initialization
+                testWorkerConnection();
+                
             } catch (error) {
                 console.error('Failed to initialize:', error);
                 showStatus('Failed to initialize application: ' + error.message, 'error');
+            }
+        }
+        
+        function testWorkerConnection() {
+            try {
+                const testWorker = new Worker('./ffmpeg-worker.js');
+                testWorker.postMessage({ type: 'TEST' });
+                testWorker.onmessage = function(e) {
+                    console.log('Worker test successful');
+                    testWorker.terminate();
+                };
+                testWorker.onerror = function(error) {
+                    console.warn('Worker test failed:', error);
+                    showStatus('Video processing may be limited due to worker issues', 'info');
+                    testWorker.terminate();
+                };
+            } catch (error) {
+                console.warn('Worker initialization test failed:', error);
             }
         }
         
@@ -235,13 +256,21 @@
             
             const file = files[0];
             const extension = file.name.split('.').pop().toLowerCase();
+            const fileSize = (file.size / (1024 * 1024)).toFixed(2); // MB
             
             if (!is_format_supported(extension)) {
                 showStatus(`Unsupported format: ${extension}`, 'error');
                 return;
             }
             
-            showStatus(`Processing ${file.name}...`, 'info');
+            // Show file info
+            showStatus(`Processing ${file.name} (${fileSize} MB)...`, 'info');
+            
+            // For large files, show streaming message
+            if (file.size > 50 * 1024 * 1024) { // > 50MB
+                showStatus(`Large file detected (${fileSize} MB). Processing in chunks for better performance...`, 'info');
+            }
+            
             showProgress();
             
             try {
