@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM Video Player Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .demo-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+        }
+        .step {
+            margin: 15px 0;
+            padding: 10px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎬 WASM Video Player - Demo & Setup Guide</h1>
+    
+    <div class="demo-section">
+        <h2>🚀 Quick Start</h2>
+        <p>Follow these steps to get the video player running:</p>
+        
+        <div class="step">
+            <h3>Step 1: Install Prerequisites</h3>
+            <p>Make sure you have Rust and Node.js installed:</p>
+            <div class="code-block">
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install wasm-pack
+cargo install wasm-pack
+
+# Install Node.js dependencies
+npm install
+            </div>
+        </div>
+        
+        <div class="step">
+            <h3>Step 2: Build the Project</h3>
+            <p>Build the WebAssembly module:</p>
+            <div class="code-block">
+# On Windows
+build.bat
+
+# On Linux/Mac
+./build.sh
+
+# Or manually
+npm run build
+            </div>
+        </div>
+        
+        <div class="step">
+            <h3>Step 3: Start the Server</h3>
+            <p>Start the development server:</p>
+            <div class="code-block">
+npm run serve
+            </div>
+            <p>Then open <strong>http://localhost:8000</strong> in your browser.</p>
+        </div>
+    </div>
+    
+    <div class="demo-section">
+        <h2>🎯 Features Demonstration</h2>
+        
+        <h3>Supported Video Formats</h3>
+        <ul>
+            <li><strong>MKV</strong> - Matroska Video (common for high-quality videos)</li>
+            <li><strong>AVI</strong> - Audio Video Interleave (legacy format)</li>
+            <li><strong>MOV</strong> - QuickTime Movie (Apple format)</li>
+            <li><strong>WMV</strong> - Windows Media Video</li>
+            <li><strong>FLV</strong> - Flash Video</li>
+            <li><strong>WebM</strong> - Web Media (Google format)</li>
+            <li><strong>MP4</strong> - Already supported natively</li>
+        </ul>
+        
+        <h3>Processing Pipeline</h3>
+        <ol>
+            <li><strong>File Upload</strong> - Drag & drop or file picker</li>
+            <li><strong>Format Detection</strong> - Rust checks file extension</li>
+            <li><strong>Worker Processing</strong> - FFmpeg.wasm converts in background</li>
+            <li><strong>Progress Reporting</strong> - Real-time conversion progress</li>
+            <li><strong>Subtitle Extraction</strong> - Automatic subtitle detection</li>
+            <li><strong>Playback</strong> - HTML5 video with subtitle tracks</li>
+        </ol>
+    </div>
+    
+    <div class="demo-section">
+        <h2>🔧 Technical Architecture</h2>
+        
+        <h3>Rust WebAssembly (src/lib.rs)</h3>
+        <ul>
+            <li>File handling and validation</li>
+            <li>Progress callback management</li>
+            <li>Worker message coordination</li>
+            <li>Browser API integration</li>
+        </ul>
+        
+        <h3>FFmpeg Worker (ffmpeg-worker.js)</h3>
+        <ul>
+            <li>Video format conversion</li>
+            <li>Subtitle extraction</li>
+            <li>Progress reporting</li>
+            <li>Background processing</li>
+        </ul>
+        
+        <h3>Frontend Integration (index.html)</h3>
+        <ul>
+            <li>Drag & drop interface</li>
+            <li>Progress visualization</li>
+            <li>Video playback controls</li>
+            <li>Subtitle management</li>
+        </ul>
+    </div>
+    
+    <div class="demo-section">
+        <h2>🧪 Testing the Player</h2>
+        
+        <p>To test the video player:</p>
+        <ol>
+            <li>Find a video file in MKV, AVI, or MOV format</li>
+            <li>Open the main application at <code>http://localhost:8000</code></li>
+            <li>Drag the video file onto the upload area</li>
+            <li>Watch the conversion progress</li>
+            <li>Play the converted video</li>
+            <li>Test subtitle functionality if available</li>
+        </ol>
+        
+        <p><strong>Note:</strong> The first load may take a moment as FFmpeg.wasm downloads from the CDN.</p>
+    </div>
+    
+    <div class="demo-section">
+        <h2>🐛 Troubleshooting</h2>
+        
+        <h3>Common Issues</h3>
+        <ul>
+            <li><strong>Build fails:</strong> Ensure Rust and wasm-pack are properly installed</li>
+            <li><strong>FFmpeg not loading:</strong> Check internet connection for CDN access</li>
+            <li><strong>Conversion fails:</strong> Try with a smaller or different video file</li>
+            <li><strong>CORS errors:</strong> Make sure to serve files via HTTP server, not file://</li>
+        </ul>
+        
+        <h3>Browser Requirements</h3>
+        <ul>
+            <li>WebAssembly support</li>
+            <li>Web Workers</li>
+            <li>HTML5 Video</li>
+            <li>File API</li>
+        </ul>
+    </div>
+    
+    <p style="text-align: center; margin-top: 40px;">
+        <a href="index.html" style="background: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+            🎬 Launch Video Player
+        </a>
+    </p>
+</body>
+</html>

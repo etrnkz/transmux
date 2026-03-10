@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WASM Video Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: border-color 0.3s;
+        }
+        
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .upload-btn {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .upload-btn:hover {
+            background: #0056b3;
+        }
+        
+        .progress-container {
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: #28a745;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            margin-top: 10px;
+            text-align: center;
+            color: #666;
+        }
+        
+        .video-container {
+            margin-top: 20px;
+            display: none;
+        }
+        
+        video {
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            border-radius: 8px;
+        }
+        
+        .controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .control-btn {
+            padding: 8px 16px;
+            border: 1px solid #ccc;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .control-btn:hover {
+            background: #f8f9fa;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .format-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 WASM Video Player</h1>
+        <p>Upload video files in various formats (MKV, AVI, MOV, etc.) and play them directly in your browser!</p>
+        
+        <div class="upload-area" id="uploadArea">
+            <div>
+                <h3>📁 Drop video files here or click to browse</h3>
+                <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                    Choose Video File
+                </button>
+                <input type="file" id="fileInput" class="file-input" accept="video/*" multiple>
+            </div>
+            <div class="format-info">
+                <strong>Supported formats:</strong> MKV, AVI, MOV, WMV, FLV, WebM, MP4
+            </div>
+        </div>
+        
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">Processing...</div>
+        </div>
+        
+        <div class="status" id="status"></div>
+        
+        <div class="video-container" id="videoContainer">
+            <video id="videoPlayer" controls>
+                Your browser does not support the video tag.
+            </video>
+            <div class="controls">
+                <button class="control-btn" onclick="toggleSubtitles()">Toggle Subtitles</button>
+                <button class="control-btn" onclick="downloadProcessed()">Download MP4</button>
+                <button class="control-btn" onclick="resetPlayer()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { VideoProcessor, get_supported_formats, is_format_supported } from './pkg/wasm_video_player.js';
+        
+        let videoProcessor;
+        let currentVideoUrl = null;
+        
+        async function initializeApp() {
+            try {
+                await init();
+                videoProcessor = new VideoProcessor();
+                videoProcessor.initialize('videoPlayer');
+                
+                // Set up progress callback
+                videoProcessor.set_progress_callback((progress) => {
+                    updateProgress(progress);
+                });
+                
+                setupEventListeners();
+                showStatus('Application initialized successfully!', 'info');
+                
+                // Display supported formats
+                const formats = get_supported_formats();
+                console.log('Supported formats:', formats);
+                
+            } catch (error) {
+                console.error('Failed to initialize:', error);
+                showStatus('Failed to initialize application: ' + error.message, 'error');
+            }
+        }
+        
+        function setupEventListeners() {
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+            
+            // Drag and drop
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('dragover');
+            });
+            
+            uploadArea.addEventListener('dragleave', () => {
+                uploadArea.classList.remove('dragover');
+            });
+            
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('dragover');
+                handleFiles(e.dataTransfer.files);
+            });
+            
+            // File input
+            fileInput.addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+        }
+        
+        function handleFiles(files) {
+            if (files.length === 0) return;
+            
+            const file = files[0];
+            const extension = file.name.split('.').pop().toLowerCase();
+            
+            if (!is_format_supported(extension)) {
+                showStatus(`Unsupported format: ${extension}`, 'error');
+                return;
+            }
+            
+            showStatus(`Processing ${file.name}...`, 'info');
+            showProgress();
+            
+            try {
+                // Process video file
+                videoProcessor.process_video_file(file);
+                
+                // Extract subtitles if available
+                videoProcessor.extract_subtitles(file);
+                
+            } catch (error) {
+                console.error('Processing error:', error);
+                showStatus('Processing failed: ' + error.message, 'error');
+                hideProgress();
+            }
+        }
+        
+        function updateProgress(progressData) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            if (progressData.progress !== undefined) {
+                progressFill.style.width = progressData.progress + '%';
+                progressText.textContent = `${progressData.status} - ${Math.round(progressData.progress)}%`;
+                
+                if (progressData.progress >= 100) {
+                    setTimeout(() => {
+                        hideProgress();
+                        showVideoContainer();
+                    }, 1000);
+                }
+            }
+        }
+        
+        function showProgress() {
+            document.getElementById('progressContainer').style.display = 'block';
+        }
+        
+        function hideProgress() {
+            document.getElementById('progressContainer').style.display = 'none';
+        }
+        
+        function showVideoContainer() {
+            document.getElementById('videoContainer').style.display = 'block';
+        }
+        
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            if (type === 'info') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        }
+        
+        // Global functions for controls
+        window.toggleSubtitles = function() {
+            const video = document.getElementById('videoPlayer');
+            const tracks = video.textTracks;
+            
+            if (tracks.length > 0) {
+                const track = tracks[0];
+                track.mode = track.mode === 'showing' ? 'hidden' : 'showing';
+                showStatus(`Subtitles ${track.mode === 'showing' ? 'enabled' : 'disabled'}`, 'info');
+            } else {
+                showStatus('No subtitles available', 'info');
+            }
+        };
+        
+        window.downloadProcessed = function() {
+            if (currentVideoUrl) {
+                const a = document.createElement('a');
+                a.href = currentVideoUrl;
+                a.download = 'converted_video.mp4';
+                a.click();
+            } else {
+                showStatus('No processed video available for download', 'error');
+            }
+        };
+        
+        window.resetPlayer = function() {
+            const video = document.getElementById('videoPlayer');
+            video.src = '';
+            document.getElementById('videoContainer').style.display = 'none';
+            document.getElementById('fileInput').value = '';
+            currentVideoUrl = null;
+            showStatus('Player reset', 'info');
+        };
+        
+        // Initialize the application
+        initializeApp();
+    </script>
+</body>
+</html>

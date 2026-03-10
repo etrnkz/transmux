@@ -1,0 +1,25 @@
+{
+  "name": "wasm-video-player",
+  "version": "1.0.0",
+  "description": "Web-based video player using Rust + WebAssembly and FFmpeg.wasm",
+  "main": "index.html",
+  "scripts": {
+    "build": "wasm-pack build --target web --out-dir pkg",
+    "serve": "python -m http.server 8000",
+    "dev": "npm run build && npm run serve",
+    "clean": "rm -rf pkg target"
+  },
+  "keywords": [
+    "rust",
+    "webassembly",
+    "wasm",
+    "video",
+    "ffmpeg",
+    "player"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wasm-pack": "^0.12.1"
+  }
+}
