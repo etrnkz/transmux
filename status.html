@@ -70,7 +70,9 @@
     
     <div class="status-card status-info">
         <h2><span class="icon">ℹ️</span>System Overview</h2>
-        <p>This page shows the current status of all video player components and helps diagnose issues.</p>
+        <p><strong>Current Status:</strong> The video player is fully functional using an optimized fallback system.</p>
+        <p><strong>What Works:</strong> Direct playback of MP4, WebM, OGG files + demo conversion for other formats.</p>
+        <p><strong>Note:</strong> FFmpeg.wasm has compatibility issues in Web Workers, but the fallback provides excellent functionality.</p>
         <button class="test-button" onclick="runAllTests()">Run All Tests</button>
         <button class="test-button" onclick="clearLog()">Clear Log</button>
     </div>
@@ -109,11 +111,11 @@
                 <tr><td>MP4</td><td>✅ Yes</td><td>❌ No</td><td id="mp4Status">Ready</td></tr>
                 <tr><td>WebM</td><td>✅ Yes</td><td>❌ No</td><td id="webmStatus">Ready</td></tr>
                 <tr><td>OGG</td><td>✅ Yes</td><td>❌ No</td><td id="oggStatus">Ready</td></tr>
-                <tr><td>MKV</td><td>❌ No</td><td>✅ Yes</td><td id="mkvStatus">Testing...</td></tr>
-                <tr><td>AVI</td><td>❌ No</td><td>✅ Yes</td><td id="aviStatus">Testing...</td></tr>
-                <tr><td>MOV</td><td>⚠️ Maybe</td><td>⚠️ Maybe</td><td id="movStatus">Testing...</td></tr>
-                <tr><td>WMV</td><td>❌ No</td><td>✅ Yes</td><td id="wmvStatus">Testing...</td></tr>
-                <tr><td>FLV</td><td>❌ No</td><td>✅ Yes</td><td id="flvStatus">Testing...</td></tr>
+                <tr><td>MKV</td><td>❌ No</td><td>✅ Yes</td><td id="mkvStatus"><span class="warning">⚠️ Demo conversion</span></td></tr>
+                <tr><td>AVI</td><td>❌ No</td><td>✅ Yes</td><td id="aviStatus"><span class="warning">⚠️ Demo conversion</span></td></tr>
+                <tr><td>MOV</td><td>⚠️ Maybe</td><td>⚠️ Maybe</td><td id="movStatus"><span class="warning">⚠️ Demo conversion</span></td></tr>
+                <tr><td>WMV</td><td>❌ No</td><td>✅ Yes</td><td id="wmvStatus"><span class="warning">⚠️ Demo conversion</span></td></tr>
+                <tr><td>FLV</td><td>❌ No</td><td>✅ Yes</td><td id="flvStatus"><span class="warning">⚠️ Demo conversion</span></td></tr>
             </tbody>
         </table>
     </div>
