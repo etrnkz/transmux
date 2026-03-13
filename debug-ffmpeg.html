@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug FFmpeg Loading</title>
+</head>
+<body>
+    <h1>Debug FFmpeg Loading</h1>
+    <div id="output"></div>
+    <button onclick="testWorker()">Test Worker</button>
+    <button onclick="testDirect()">Test Direct</button>
+    
+    <script>
+        const output = document.getElementById('output');
+        
+        function log(message) {
+            output.innerHTML += message + '<br>';
+            console.log(message);
+        }
+        
+        function testDirect() {
+            log('=== Testing Direct Loading ===');
+            
+            // Test if we can load the script directly
+            fetch('public/ffmpeg.js')
+                .then(response => {
+                    log('FFmpeg script fetch status: ' + response.status);
+                    if (response.ok) {
+                        log('✅ FFmpeg script is accessible');
+                        return response.text();
+                    } else {
+                        throw new Error('HTTP ' + response.status);
+                    }
+                })
+                .then(scriptContent => {
+                    log('Script size: ' + scriptContent.length + ' bytes');
+                    log('Script starts with: ' + scriptContent.substring(0, 100) + '...');
+                    
+                    // Try to execute it
+                    const script = document.createElement('script');
+                    script.textContent = scriptContent;
+                    document.head.appendChild(script);
+                    
+                    setTimeout(() => {
+                        log('After script execution:');
+                        log('- FFmpeg: ' + typeof FFmpeg);
+                        log('- createFFmpeg: ' + typeof createFFmpeg);
+                        log('- fetchFile: ' + typeof fetchFile);
+                        
+                        if (typeof FFmpeg !== 'undefined') {
+                            log('FFmpeg keys: ' + Object.keys(FFmpeg));
+                        }
+                    }, 100);
+                })
+                .catch(error => {
+                    log('❌ Failed to load FFmpeg script: ' + error.message);
+                });
+        }
+        
+        function testWorker() {
+            log('=== Testing Worker Loading ===');
+            
+            const workerCode = `
+                console.log('Worker: Starting FFmpeg test');
+                
+                self.onmessage = function(e) {
+                    try {
+                        console.log('Worker: Attempting to load FFmpeg...');
+                        importScripts('public/ffmpeg.js');
+                        console.log('Worker: Script loaded');
+                        
+                        self.postMessage({
+                            type: 'LOADED',
+                            FFmpeg: typeof FFmpeg,
+                            createFFmpeg: typeof createFFmpeg,
+                            fetchFile: typeof fetchFile
+                        });
+                        
+                        if (typeof FFmpeg !== 'undefined') {
+                            self.postMessage({
+                                type: 'KEYS',
+                                keys: Object.keys(FFmpeg)
+                            });
+                        }
+                        
+                    } catch (error) {
+                        console.error('Worker: Error loading FFmpeg:', error);
+                        self.postMessage({
+                            type: 'ERROR',
+                            message: error.message,
+                            stack: error.stack
+                        });
+                    }
+                };
+            `;
+            
+            const blob = new Blob([workerCode], { type: 'application/javascript' });
+            const worker = new Worker(URL.createObjectURL(blob));
+            
+            worker.onmessage = function(e) {
+                const data = e.data;
+                if (data.type === 'LOADED') {
+                    log('Worker globals: FFmpeg=' + data.FFmpeg + ', createFFmpeg=' + data.createFFmpeg + ', fetchFile=' + data.fetchFile);
+                } else if (data.type === 'KEYS') {
+                    log('Worker FFmpeg keys: ' + data.keys.join(', '));
+                } else if (data.type === 'ERROR') {
+                    log('❌ Worker error: ' + data.message);
+                    log('Stack: ' + data.stack);
+                }
+            };
+            
+            worker.onerror = function(error) {
+                log('❌ Worker creation error: ' + error.message);
+            };
+            
+            worker.postMessage('test');
+        }
+    </script>
+</body>
+</html>

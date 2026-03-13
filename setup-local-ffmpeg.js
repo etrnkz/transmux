@@ -7,17 +7,18 @@ const path = require('path');
 
 const files = [
     {
-        url: 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.js',
+        url: 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js',
         path: 'public/ffmpeg.js'
     },
     {
-        url: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js',
+        url: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
         path: 'public/ffmpeg-core.js'
     },
     {
-        url: 'https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm',
+        url: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.wasm',
         path: 'public/ffmpeg-core.wasm'
-    }
+    },
+];
 ];
 
 // Create public directory if it doesn't exist

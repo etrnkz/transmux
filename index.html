@@ -128,6 +128,39 @@
             border: 1px solid #f5c6cb;
         }
         
+        .log-panel {
+            margin-top: 20px;
+            background: #0f0f0f;
+            border-radius: 8px;
+            border: 1px solid #262626;
+            padding: 12px;
+            color: #d4f7e8;
+            font-size: 13px;
+        }
+        
+        .log-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #b8f0cd;
+        }
+        
+        .log-panel pre {
+            margin: 0;
+            max-height: 180px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'Courier New', monospace;
+            background: #050505;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #1f1f1f;
+            color: inherit;
+        }
+        
         .format-info {
             margin-top: 10px;
             font-size: 14px;
@@ -140,6 +173,10 @@
         <h1>🎬 WASM Video Player - VLC for Browser</h1>
         <p><strong>Real FFmpeg.wasm conversion!</strong> Upload ANY video format and it will be converted to MP4 for browser playback.</p>
         <p><em>Supports: MKV, AVI, MOV, WMV, FLV, WebM, MP4, and many more formats!</em></p>
+        
+        <div id="ffmpegStatus" class="status info" style="display: none;">
+            <span id="ffmpegStatusText">Checking FFmpeg.wasm availability...</span>
+        </div>
         
         <div class="upload-area" id="uploadArea">
             <div>
@@ -163,6 +200,14 @@
         
         <div class="status" id="status"></div>
         
+        <div class="log-panel" id="logPanel">
+            <div class="log-panel-header">
+                <span>FFmpeg conversion log</span>
+                <button class="control-btn log-clear-btn" onclick="clearLog()">Clear logs</button>
+            </div>
+            <pre id="ffmpegLog">Awaiting FFmpeg output...</pre>
+        </div>
+        
         <div class="video-container" id="videoContainer">
             <video id="videoPlayer" controls>
                 Your browser does not support the video tag.
@@ -180,6 +225,11 @@
         
         let videoProcessor;
         let currentVideoUrl = null;
+        const streamingFormats = new Set(['mp4', 'webm', 'ogg']);
+        const directPlaybackFormats = new Set(['mp4', 'webm', 'ogg']);
+        const nativeMimeTypes = new Set(['video/mp4', 'video/webm', 'video/ogg']);
+        let streamingSourceUrl = null;
+        const LOG_LINE_LIMIT = 300;
         
         async function initializeApp() {
             try {
@@ -258,16 +308,30 @@
         }
         
         function testWorkerConnection() {
+            // Show FFmpeg status
+            const ffmpegStatus = document.getElementById('ffmpegStatus');
+            const ffmpegStatusText = document.getElementById('ffmpegStatusText');
+            ffmpegStatus.style.display = 'block';
+            
             try {
                 // Try FFmpeg worker first
                 const ffmpegWorker = new Worker('./ffmpeg-worker.js');
-                ffmpegWorker.postMessage({ type: 'TEST' });
+                ffmpegWorker.postMessage({ type: 'TEST_FFMPEG' });
                 
                 let ffmpegWorked = false;
                 
                 ffmpegWorker.onmessage = function(e) {
-                    if (e.data.type === 'TEST_RESPONSE') {
-                        console.log('FFmpeg worker test successful');
+                    if (e.data.type === 'FFMPEG_TEST_RESULT') {
+                        console.log('FFmpeg test result:', e.data.message);
+                        
+                        if (e.data.message.includes('successfully')) {
+                            ffmpegStatusText.textContent = '✅ FFmpeg.wasm loaded - Real video conversion available!';
+                            ffmpegStatus.className = 'status info';
+                        } else {
+                            ffmpegStatusText.textContent = '⚠️ FFmpeg.wasm not available - Using fallback mode (MP4/WebM/OGG only)';
+                            ffmpegStatus.className = 'status error';
+                        }
+                        
                         ffmpegWorked = true;
                         ffmpegWorker.terminate();
                     }
@@ -276,6 +340,8 @@
                 ffmpegWorker.onerror = function(error) {
                     console.warn('FFmpeg worker test failed:', error);
                     if (!ffmpegWorked) {
+                        ffmpegStatusText.textContent = '❌ FFmpeg worker failed - Limited functionality available';
+                        ffmpegStatus.className = 'status error';
                         testSimpleWorker();
                     }
                     ffmpegWorker.terminate();
@@ -285,13 +351,17 @@
                 setTimeout(() => {
                     if (!ffmpegWorked) {
                         console.log('FFmpeg worker timeout, trying simple worker');
+                        ffmpegStatusText.textContent = '⏰ FFmpeg loading timeout - Using simple worker';
+                        ffmpegStatus.className = 'status error';
                         ffmpegWorker.terminate();
                         testSimpleWorker();
                     }
-                }, 3000);
+                }, 5000);
                 
             } catch (error) {
                 console.warn('FFmpeg worker initialization failed:', error);
+                ffmpegStatusText.textContent = '❌ Worker initialization failed';
+                ffmpegStatus.className = 'status error';
                 testSimpleWorker();
             }
         }
@@ -359,6 +429,17 @@
                 return;
             }
             
+            const mime = (file.type || '').toLowerCase();
+            const isNativeMime = nativeMimeTypes.has(mime);
+            if (directPlaybackFormats.has(extension) && isNativeMime) {
+                showStatus(`Playing ${file.name} directly (${extension.toUpperCase()}) without conversion`, 'info');
+                maybeStreamOriginal(file, extension);
+                return;
+            }
+            if (directPlaybackFormats.has(extension) && !isNativeMime) {
+                showStatus(`Detected ${extension.toUpperCase()} container but unsupported codec; running FFmpeg conversion.`, 'info');
+            }
+            
             // Show file info
             showStatus(`Processing ${file.name} (${fileSize} MB)...`, 'info');
             
@@ -368,6 +449,7 @@
             }
             
             showProgress();
+            maybeStreamOriginal(file, extension);
             
             try {
                 // Process video file
@@ -400,12 +482,62 @@
             }
         }
         
+        function appendLog(message) {
+            const logElement = document.getElementById('ffmpegLog');
+            if (!logElement) return;
+            const cleanMessage = message?.toString().trim();
+            if (!cleanMessage) return;
+            
+            if (logElement.textContent.trim() === 'Awaiting FFmpeg output...') {
+                logElement.textContent = '';
+            }
+            
+            const timeStamp = new Date().toLocaleTimeString();
+            const newLine = `[${timeStamp}] ${cleanMessage}`;
+            const existing = logElement.textContent ? `${logElement.textContent}\n` : '';
+            const updated = `${existing}${newLine}`;
+            const lines = updated.split('\n').slice(-LOG_LINE_LIMIT);
+            logElement.textContent = lines.join('\n');
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+        
+        function clearLog() {
+            const logElement = document.getElementById('ffmpegLog');
+            if (logElement) {
+                logElement.textContent = 'Awaiting FFmpeg output...';
+            }
+        }
+        
+        function maybeStreamOriginal(file, extension) {
+            if (!streamingFormats.has(extension)) return;
+            const video = document.getElementById('videoPlayer');
+            cleanupStreamingSource();
+            streamingSourceUrl = URL.createObjectURL(file);
+            video.src = streamingSourceUrl;
+            video.load();
+            video.play().catch(() => {});
+            showVideoContainer();
+            showStatus('Streaming the source file while FFmpeg converts...', 'info');
+        }
+        
+        function cleanupStreamingSource() {
+            if (streamingSourceUrl) {
+                URL.revokeObjectURL(streamingSourceUrl);
+                streamingSourceUrl = null;
+            }
+        }
+        
         // Enhanced message handling for different worker types
         function handleWorkerMessage(event) {
-            const data = event.data;
+            const data = event?.data;
+            if (!data || typeof data.type !== 'string') return;
             const messageType = data.type;
 
             switch (messageType) {
+                case 'FFLOG':
+                    appendLog(data.message || 'Log event');
+                    break;
+                    
                 case 'PROGRESS':
                     updateProgress(data.progress);
                     break;
@@ -414,10 +546,15 @@
                     console.log('VIDEO_READY received:', data);
                     const video = document.getElementById('videoPlayer');
                     
+                    cleanupStreamingSource();
+                    if (currentVideoUrl && currentVideoUrl !== data.url) {
+                        URL.revokeObjectURL(currentVideoUrl);
+                    }
+                    
                     if (data.url) {
+                        currentVideoUrl = data.url;
                         console.log('Setting video source to:', data.url);
                         video.src = data.url;
-                        currentVideoUrl = data.url;
                         
                         // Set poster image if provided
                         if (data.poster) {
@@ -441,7 +578,18 @@
                         // Add error handling for video load failures
                         video.onerror = function(e) {
                             console.error('Video load error:', e);
-                            showStatus(`Video format not supported by browser. Original format: ${data.originalFormat?.toUpperCase() || 'unknown'}`, 'warning');
+                            console.error('Video error details:', {
+                                error: video.error,
+                                networkState: video.networkState,
+                                readyState: video.readyState,
+                                src: video.src
+                            });
+                            
+                            if (data.originalFormat && data.originalFormat !== 'mp4') {
+                                showStatus(`❌ Video playback failed. The ${data.originalFormat?.toUpperCase()} file could not be converted to MP4. FFmpeg.wasm may not be working properly. Try refreshing the page or use MP4/WebM files directly.`, 'error');
+                            } else {
+                                showStatus(`❌ Video format not supported by browser. Try converting to MP4 first.`, 'error');
+                            }
                         };
                         
                         video.onloadstart = function() {
@@ -557,6 +705,10 @@
             video.src = '';
             document.getElementById('videoContainer').style.display = 'none';
             document.getElementById('fileInput').value = '';
+            cleanupStreamingSource();
+            if (currentVideoUrl) {
+                URL.revokeObjectURL(currentVideoUrl);
+            }
             currentVideoUrl = null;
             showStatus('Player reset', 'info');
         };

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Worker Test</title>
+</head>
+<body>
+    <h1>FFmpeg Worker Test</h1>
+    <div id="output"></div>
+    
+    <script>
+        const output = document.getElementById('output');
+        
+        function log(message) {
+            output.innerHTML += message + '<br>';
+            console.log(message);
+        }
+        
+        log('Starting worker test...');
+        
+        try {
+            const worker = new Worker('./ffmpeg-worker.js');
+            
+            worker.onmessage = function(e) {
+                log('Worker message: ' + JSON.stringify(e.data));
+            };
+            
+            worker.onerror = function(error) {
+                log('Worker error: ' + error.message);
+            };
+            
+            // Test FFmpeg loading
+            log('Testing FFmpeg loading...');
+            worker.postMessage({ type: 'TEST_FFMPEG' });
+            
+        } catch (error) {
+            log('Failed to create worker: ' + error.message);
+        }
+    </script>
+</body>
+</html>

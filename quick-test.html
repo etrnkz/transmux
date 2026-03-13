@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Quick FFmpeg Test</title>
+</head>
+<body>
+    <h1>Quick FFmpeg Test</h1>
+    <div id="output"></div>
+    <button onclick="testWorker()">Test Worker</button>
+    
+    <script>
+        const output = document.getElementById('output');
+        
+        function log(message) {
+            output.innerHTML += message + '<br>';
+            console.log(message);
+        }
+        
+        function testWorker() {
+            log('Testing FFmpeg worker...');
+            
+            const worker = new Worker('./ffmpeg-worker.js');
+            
+            worker.onmessage = function(e) {
+                log('Worker response: ' + JSON.stringify(e.data));
+            };
+            
+            worker.onerror = function(error) {
+                log('Worker error: ' + error.message);
+            };
+            
+            // Test FFmpeg loading
+            worker.postMessage({ type: 'TEST_FFMPEG' });
+        }
+    </script>
+</body>
+</html>

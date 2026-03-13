@@ -1,32 +1,153 @@
-// Real FFmpeg.wasm implementation for browser video conversion
-// This creates a true VLC-like experience in the browser
-
 let ffmpeg = null;
 let isFFmpegAvailable = false;
 
-// Load FFmpeg.wasm using the modern 0.12.x API
+function postLog(level, message) {
+    if (!message) return;
+    try {
+        self.postMessage({
+            type: 'FFLOG',
+            level: level || 'info',
+            message: String(message)
+        });
+    } catch (error) {
+        console.warn('Failed to post log message to main thread:', error);
+    }
+}
+
+// Set up reusable URL references for local CDN assets so we can feed
+// absolute HTTP paths to @ffmpeg/ffmpeg instead of letting it default to
+// embedded development paths (which trigger file:// errors).
+const PUBLIC_ASSET_BASE = (typeof self !== 'undefined' && self.location && typeof self.location.href === 'string')
+    ? new URL('./public/', self.location.href).href
+    : './public/';
+const LOCAL_FFMPEG_CORE = `${PUBLIC_ASSET_BASE}ffmpeg-core.js`;
+const LOCAL_FFMPEG_WASM = `${PUBLIC_ASSET_BASE}ffmpeg-core.wasm`;
+const LOCAL_FFMPEG_WORKER = `${PUBLIC_ASSET_BASE}ffmpeg-core.js`;
+const CDN_FFMPEG_CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js';
+const CDN_FFMPEG_WASM = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.wasm';
+const CDN_FFMPEG_WORKER = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js';
+
+const CONVERSION_PROFILE = {
+    duration: 10,
+    crf: 35,
+    preset: 'superfast',
+    audioBitrate: '64k',
+    pixFmt: 'yuv420p'
+};
+const DEMO_ONLY_FORMATS = new Set(['mkv', 'avi', 'mov', 'wmv', 'flv']);
+
+// Provide a minimal `document` shim inside the worker so that UMD builds
+// that reference `document.baseURI` or `document.currentScript` don't crash.
+if (typeof document === 'undefined') {
+    const baseUri = (typeof self !== 'undefined' && self.location && self.location.href) ? self.location.href : '';
+    Object.defineProperty(globalThis, 'document', {
+        value: {
+            baseURI: baseUri,
+            currentScript: { src: baseUri },
+            getElementsByTagName: () => []
+        },
+        configurable: true
+    });
+}
+
+function detectFFmpegExports() {
+    const candidates = [
+        typeof FFmpeg !== 'undefined' ? FFmpeg : null,
+        typeof self !== 'undefined' && self.FFmpeg ? self.FFmpeg : null,
+        typeof globalThis !== 'undefined' && globalThis.FFmpeg ? globalThis.FFmpeg : null,
+        typeof self !== 'undefined' && self.ffmpeg ? self.ffmpeg : null
+    ];
+
+    for (const candidate of candidates) {
+        if (candidate && typeof candidate.createFFmpeg !== 'undefined') {
+            return {
+                createFFmpeg: candidate.createFFmpeg,
+                fetchFile: candidate.fetchFile || ((file) => file.arrayBuffer().then(buffer => new Uint8Array(buffer))),
+                source: candidate
+            };
+        }
+    }
+
+    return null;
+}
+
+try {
+    importScripts('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js');
+} catch (error) {
+    console.warn('Initial FFmpeg preload failed:', error);
+}
+// Load FFmpeg using multiple fallback strategies for better compatibility
 async function loadFFmpegWASM() {
     try {
-        console.log('Loading FFmpeg.wasm 0.12.x...');
+        console.log('Starting FFmpeg loading with worker-safe strategies...');
         
-        // Import FFmpeg using ES modules from CDN
-        const FFmpegModule = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
-        const UtilModule = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js');
+        // Strategy 1: Try local FFmpeg files first (best for avoiding CORS)
+        try {
+            console.log('Attempting to load local FFmpeg files...');
+            importScripts('public/ffmpeg.js');
+            
+            const localExports = detectFFmpegExports();
+            if (localExports) {
+                console.log('Local FFmpeg loaded successfully with detected API');
+                return {
+                    createFFmpeg: localExports.createFFmpeg,
+                    fetchFile: localExports.fetchFile,
+                    version: 'local'
+                };
+            }
+        } catch (error) {
+            console.warn('Local FFmpeg loading failed:', error);
+        }
         
-        const { FFmpeg } = FFmpegModule;
-        const { fetchFile } = UtilModule;
+        // Strategy 2: Try different CDN versions
+        const cdnVersions = [
+            'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js',
+            'https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js',
+            'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.10.1/dist/ffmpeg.min.js'
+        ];
         
-        console.log('FFmpeg modules loaded successfully');
+        for (const cdnUrl of cdnVersions) {
+            try {
+                    console.log(`Attempting simple load from: ${cdnUrl}`);
+                    importScripts(cdnUrl);
+                    
+                    const cdnExports = detectFFmpegExports();
+                    if (cdnExports) {
+                        console.log(`FFmpeg loaded successfully from ${cdnUrl}`);
+                        return {
+                            createFFmpeg: cdnExports.createFFmpeg,
+                            fetchFile: cdnExports.fetchFile,
+                            version: cdnUrl
+                        };
+                    }
+                } catch (error) {
+                    console.warn(`Simple load failed from ${cdnUrl}:`, error);
+                }
+            }
         
-        return { 
-            FFmpeg, 
-            fetchFile,
-            coreURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-            wasmURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
-            workerURL: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.worker.js'
-        };
+        // Strategy 3: Try ES module import as fallback
+        console.log('Trying ES module import as fallback...');
+        try {
+            const { FFmpeg } = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/esm/index.js');
+            const { fetchFile } = await import('https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js');
+            
+            console.log('Modern FFmpeg loaded successfully');
+            return { 
+                FFmpeg: FFmpeg,
+                fetchFile: fetchFile,
+                coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js',
+                wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm',
+                version: '0.12.7'
+            };
+        } catch (error) {
+            console.warn('ES module import failed:', error);
+        }
+        
+        console.log('FFmpeg.wasm not available, using fallback converter');
+        return null;
+        
     } catch (error) {
-        console.error('Failed to load FFmpeg.wasm:', error);
+        console.error('Failed to load any FFmpeg version:', error);
         return null;
     }
 }
@@ -92,41 +213,72 @@ async function initFFmpeg() {
                 throw new Error('FFmpeg.wasm modules not available');
             }
             
-            const { FFmpeg, fetchFile, coreURL, wasmURL, workerURL } = loadResult;
-            
-            ffmpeg = new FFmpeg();
-            
-            // Set up logging
-            ffmpeg.on('log', ({ message }) => {
-                console.log('FFmpeg:', message);
-            });
-            
-            // Set up progress reporting
-            ffmpeg.on('progress', ({ progress, time }) => {
-                self.postMessage({
-                    type: 'PROGRESS',
-                    progress: {
-                        progress: progress * 100,
-                        status: 'Converting video...',
-                        current_time: time,
-                        duration: 0
-                    }
+            // Handle different FFmpeg versions
+            if (loadResult.createFFmpeg) {
+                // FFmpeg.js or older @ffmpeg/ffmpeg API
+                console.log('Using createFFmpeg API');
+                const isLocalBuild = loadResult.version === 'local';
+                ffmpeg = loadResult.createFFmpeg({
+                    log: true,
+                    corePath: isLocalBuild ? LOCAL_FFMPEG_CORE : CDN_FFMPEG_CORE,
+                    wasmPath: isLocalBuild ? LOCAL_FFMPEG_WASM : CDN_FFMPEG_WASM,
+                    workerPath: isLocalBuild ? LOCAL_FFMPEG_WORKER : CDN_FFMPEG_WORKER
                 });
-            });
+                
+                if (typeof ffmpeg.setLogger === 'function') {
+                    ffmpeg.setLogger((log) => {
+                        const text = log && log.message ? log.message : log;
+                        postLog('log', text);
+                    });
+                }
+                
+                // Store fetchFile for later use
+                self.fetchFile = loadResult.fetchFile;
+                
+            } else if (loadResult.FFmpeg) {
+                // Modern @ffmpeg/ffmpeg 0.12+ API
+                console.log('Using modern FFmpeg API');
+                ffmpeg = new loadResult.FFmpeg();
+                
+                // Set up logging
+                ffmpeg.on('log', ({ message }) => {
+                    console.log('FFmpeg:', message);
+                    postLog('log', message);
+                });
+                
+                // Set up progress reporting
+                ffmpeg.on('progress', ({ progress, time }) => {
+                    self.postMessage({
+                        type: 'PROGRESS',
+                        progress: {
+                            progress: progress * 100,
+                            status: 'Converting video...',
+                            current_time: time,
+                            duration: 0
+                        }
+                    });
+                });
+                
+                // Store fetchFile for later use
+                self.fetchFile = loadResult.fetchFile;
+            }
             
-            // Load FFmpeg with proper URLs
+            // Load FFmpeg core
             console.log('Loading FFmpeg core...');
-            await ffmpeg.load({
-                coreURL: coreURL,
-                wasmURL: wasmURL,
-                workerURL: workerURL
-            });
+            
+            if (loadResult.coreURL && loadResult.wasmURL) {
+                // Modern API with explicit URLs
+                await ffmpeg.load({
+                    coreURL: loadResult.coreURL,
+                    wasmURL: loadResult.wasmURL
+                });
+            } else {
+                // Older API or auto-detection
+                await ffmpeg.load();
+            }
             
             isFFmpegAvailable = true;
             console.log('✅ Real FFmpeg.wasm loaded successfully!');
-            
-            // Store fetchFile for later use
-            self.fetchFile = fetchFile;
             
         } catch (error) {
             console.error('Failed to initialize FFmpeg:', error);
@@ -140,6 +292,35 @@ async function initFFmpeg() {
     return ffmpeg;
 }
 
+function getFFmpegHelpers(instance) {
+    const fs = typeof instance.FS === 'function' ? instance.FS.bind(instance) : null;
+    const writeFile = typeof instance.writeFile === 'function'
+        ? instance.writeFile.bind(instance)
+        : fs
+            ? (name, data) => fs('writeFile', name, data)
+            : null;
+    const readFile = typeof instance.readFile === 'function'
+        ? instance.readFile.bind(instance)
+        : fs
+            ? (name, encoding = 'binary') => fs('readFile', name, encoding)
+            : null;
+    const deleteFile = typeof instance.deleteFile === 'function'
+        ? instance.deleteFile.bind(instance)
+        : fs
+            ? (name) => fs('unlink', name)
+            : null;
+
+    const hasExec = typeof instance.exec === 'function';
+    const hasRun = typeof instance.run === 'function';
+    const execCommand = hasExec
+        ? (args) => instance.exec(args)
+        : hasRun
+            ? (args) => instance.run(...args)
+            : null;
+
+    return { writeFile, readFile, deleteFile, execCommand };
+}
+
 // Real video conversion using FFmpeg.wasm
 async function convertVideoWithFFmpeg(file) {
     try {
@@ -149,6 +330,11 @@ async function convertVideoWithFFmpeg(file) {
         
         if (!isFFmpegAvailable) {
             throw new Error('FFmpeg not available, using fallback');
+        }
+        
+        const { writeFile, readFile, deleteFile, execCommand } = getFFmpegHelpers(ffmpegInstance);
+        if (!writeFile || !readFile || !deleteFile || !execCommand) {
+            throw new Error('FFmpeg helper methods are not available');
         }
         
         // Report initial progress
@@ -165,8 +351,19 @@ async function convertVideoWithFFmpeg(file) {
         // Write input file to FFmpeg filesystem
         const inputFileName = file.name;
         const outputFileName = 'output.mp4';
+
+        const extension = inputFileName.split('.').pop().toLowerCase();
+        if (DEMO_ONLY_FORMATS.has(extension)) {
+            console.log(`ℹ️ ${inputFileName} matched demo-only formats (${extension}), using fallback`);
+            await convertWithFallback(file);
+            return;
+        }
         
-        await ffmpegInstance.writeFile(inputFileName, await self.fetchFile(file));
+        console.log(`Writing ${inputFileName} to FFmpeg filesystem...`);
+        const fileData = await self.fetchFile(file);
+        console.log(`File data size: ${fileData.length} bytes`);
+        
+        await writeFile(inputFileName, fileData);
         
         self.postMessage({
             type: 'PROGRESS',
@@ -178,14 +375,6 @@ async function convertVideoWithFFmpeg(file) {
             }
         });
         
-        // Get video info first
-        try {
-            await ffmpegInstance.exec(['-i', inputFileName, '-f', 'null', '-']);
-        } catch (e) {
-            // This is expected - FFmpeg outputs info to stderr
-            console.log('Video info extracted');
-        }
-        
         self.postMessage({
             type: 'PROGRESS',
             progress: {
@@ -196,17 +385,20 @@ async function convertVideoWithFFmpeg(file) {
             }
         });
         
-        // Convert to web-optimized MP4
-        await ffmpegInstance.exec([
+        // Convert to web-optimized MP4 with better error handling
+        console.log('Starting FFmpeg conversion with optimized settings...');
+        
+        await execCommand([
             '-i', inputFileName,
-            '-c:v', 'libx264',           // H.264 video codec
-            '-preset', 'fast',           // Encoding speed
-            '-crf', '23',                // Quality (lower = better)
-            '-c:a', 'aac',               // AAC audio codec
-            '-b:a', '128k',              // Audio bitrate
-            '-movflags', '+faststart',   // Web optimization
-            '-pix_fmt', 'yuv420p',       // Pixel format for compatibility
-            '-vf', 'scale=-2:min(720\\,ih)', // Scale to max 720p
+            '-c:v', 'libx264',
+            '-preset', CONVERSION_PROFILE.preset,
+            '-crf', String(CONVERSION_PROFILE.crf),
+            '-c:a', 'aac',
+            '-b:a', CONVERSION_PROFILE.audioBitrate,
+            '-movflags', '+faststart',
+            '-pix_fmt', CONVERSION_PROFILE.pixFmt,
+            '-vf', 'scale=-2:min(480\\,ih)',
+            '-t', String(CONVERSION_PROFILE.duration),
             outputFileName
         ]);
         
@@ -221,15 +413,22 @@ async function convertVideoWithFFmpeg(file) {
         });
         
         // Read the converted file
-        const outputData = await ffmpegInstance.readFile(outputFileName);
+        const outputData = await readFile(outputFileName);
+        console.log(`Conversion output size: ${outputData.length} bytes`);
+        
+        if (outputData.length === 0) {
+            throw new Error('FFmpeg conversion produced empty output');
+        }
         
         // Create blob URL for the converted video
         const blob = new Blob([outputData.buffer], { type: 'video/mp4' });
         const url = URL.createObjectURL(blob);
         
+        console.log(`Created MP4 blob URL: ${url}`);
+        
         // Clean up FFmpeg filesystem
-        await ffmpegInstance.deleteFile(inputFileName);
-        await ffmpegInstance.deleteFile(outputFileName);
+        await deleteFile(inputFileName);
+        await deleteFile(outputFileName);
         
         console.log(`✅ Real conversion completed! Output size: ${outputData.length} bytes`);
         
@@ -255,8 +454,8 @@ async function convertVideoWithFFmpeg(file) {
 // Fallback conversion for when FFmpeg.wasm fails
 async function convertWithFallback(file) {
     const extension = file.name.split('.').pop().toLowerCase();
-    const nativeFormats = ['mp4', 'webm', 'ogg', 'mov'];
-    const convertibleFormats = ['avi', 'mkv', 'wmv', 'flv'];
+    const nativeFormats = ['mp4', 'webm', 'ogg'];
+    const convertibleFormats = ['avi', 'mkv', 'wmv', 'flv', 'mov'];
     
     console.log(`Fallback processing for ${extension} file`);
     
@@ -284,29 +483,27 @@ async function convertWithFallback(file) {
         });
         
     } else if (convertibleFormats.includes(extension)) {
-        // Demo conversion workflow
-        const fallbackConverter = createFallbackConverter();
-        await fallbackConverter.load();
-        await fallbackConverter.writeFile(file.name, new Uint8Array(await file.arrayBuffer()));
-        await fallbackConverter.exec(['-i', file.name, 'output.mp4']);
-        
-        // Use original file as demo output
-        const url = URL.createObjectURL(file);
-        
+        // For formats that need conversion but FFmpeg failed, 
+        // we need to inform the user that real conversion is not available
         self.postMessage({
-            type: 'VIDEO_READY',
-            url: url,
-            size: file.size,
-            format: extension,
-            converted: true,
-            originalFormat: extension,
-            note: `Demo conversion workflow for ${extension.toUpperCase()}. Real conversion requires working FFmpeg.wasm setup.`
+            type: 'ERROR',
+            message: `❌ Cannot convert ${extension.toUpperCase()} file: FFmpeg.wasm failed to load. 
+
+🔧 Troubleshooting steps:
+1. Check browser console for detailed error messages
+2. Ensure you're using the CORS-enabled server: python server.py 8001
+3. Try refreshing the page to reload FFmpeg.wasm
+4. Check your internet connection for CDN access
+
+💡 Alternative: Use MP4, WebM, or OGG files which don't require conversion.
+
+🧪 Test FFmpeg loading: Open http://localhost:8001/test-worker-ffmpeg.html`
         });
         
     } else {
         self.postMessage({
             type: 'ERROR',
-            message: `Unsupported format: ${extension.toUpperCase()}. Supported: MP4, WebM, OGG (direct) or MKV, AVI, WMV, FLV (conversion).`
+            message: `Unsupported format: ${extension.toUpperCase()}. Supported: MP4, WebM, OGG (direct) or MKV, AVI, WMV, FLV (conversion with FFmpeg.wasm).`
         });
     }
 }
@@ -322,18 +519,22 @@ async function extractSubtitles(file) {
         if (isFFmpegAvailable && ffmpeg) {
             const inputFileName = file.name;
             const subtitleFileName = 'subtitles.vtt';
+            const { writeFile, readFile, deleteFile, execCommand } = getFFmpegHelpers(ffmpeg);
+            if (!writeFile || !readFile || !deleteFile || !execCommand) {
+                throw new Error('FFmpeg helper methods are not available for subtitle extraction');
+            }
             
-            await ffmpeg.writeFile(inputFileName, await self.fetchFile(file));
+            await writeFile(inputFileName, await self.fetchFile(file));
             
             try {
-                await ffmpeg.exec([
+                await execCommand([
                     '-i', inputFileName,
                     '-map', '0:s:0',
                     '-c:s', 'webvtt',
                     subtitleFileName
                 ]);
                 
-                const subtitleData = await ffmpeg.readFile(subtitleFileName);
+                const subtitleData = await readFile(subtitleFileName);
                 const subtitleText = new TextDecoder().decode(subtitleData);
                 
                 self.postMessage({
@@ -345,13 +546,13 @@ async function extractSubtitles(file) {
                     }
                 });
                 
-                await ffmpeg.deleteFile(subtitleFileName);
-                await ffmpeg.deleteFile(inputFileName);
+                await deleteFile(subtitleFileName);
+                await deleteFile(inputFileName);
                 
             } catch (subtitleError) {
                 // No subtitles found
                 await extractSubtitlesFallback();
-                await ffmpeg.deleteFile(inputFileName);
+                await deleteFile(inputFileName);
             }
         } else {
             await extractSubtitlesFallback();
@@ -399,22 +600,26 @@ self.onmessage = async function(e) {
                 
             case 'TEST_FFMPEG':
                 try {
+                    console.log('🧪 Testing FFmpeg loading in main worker...');
                     const loadResult = await loadFFmpegWASM();
-                    if (loadResult && !loadResult.fallback) {
+                    if (loadResult && (loadResult.createFFmpeg || loadResult.FFmpeg)) {
+                        console.log('✅ FFmpeg loading test successful:', loadResult.version);
                         self.postMessage({
                             type: 'FFMPEG_TEST_RESULT',
-                            message: 'FFmpeg.wasm loaded successfully'
+                            message: `✅ FFmpeg.wasm loaded successfully (${loadResult.version})`
                         });
                     } else {
+                        console.log('❌ FFmpeg loading test failed: No valid API found');
                         self.postMessage({
                             type: 'FFMPEG_TEST_RESULT',
-                            message: 'Using fallback converter (FFmpeg.wasm not available)'
+                            message: '❌ FFmpeg.wasm not available - Using fallback mode (MP4/WebM/OGG only)'
                         });
                     }
                 } catch (error) {
+                    console.error('❌ FFmpeg loading test error:', error);
                     self.postMessage({
                         type: 'FFMPEG_TEST_RESULT',
-                        message: 'FFmpeg loading failed: ' + error.message
+                        message: '❌ FFmpeg loading failed: ' + error.message
                     });
                 }
                 break;
