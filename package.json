@@ -1,7 +1,7 @@
 {
   "name": "wasm-video-player",
   "version": "1.0.0",
-  "description": "Web-based video player using Rust + WebAssembly and FFmpeg.wasm",
+  "description": "Web-based video player using Rust + WebAssembly and FFmpeg.wasm to stream AVI/MKV playback live and export MP4",
   "main": "index.html",
   "scripts": {
     "build": "wasm-pack build --target web --out-dir pkg",
@@ -10,7 +10,9 @@
     "dev": "npm run build && npm run serve",
     "clean": "rm -rf pkg target",
     "setup-ffmpeg": "node setup-local-ffmpeg.js",
-    "setup": "npm run setup-ffmpeg && npm run build"
+    "setup": "npm run setup-ffmpeg && npm run build",
+    "test": "node test-e2e.js",
+    "test:streaming": "node test-streaming-e2e.js"
   },
   "keywords": [
     "rust",
@@ -18,7 +20,9 @@
     "wasm",
     "video",
     "ffmpeg",
-    "player"
+    "player",
+    "avi",
+    "mse"
   ],
   "author": "",
   "license": "MIT",

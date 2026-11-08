@@ -1,152 +1,87 @@
-# 🔧 Troubleshooting Guide
+# Troubleshooting
 
-## Common Issues and Solutions
+## "FFmpeg initialization failed" / the status pill never leaves "Initializing"
 
-### 1. "Format mkv requires FFmpeg.wasm which failed to load"
+The page could not load the FFmpeg core. Work through these in order.
 
-This error occurs when FFmpeg.wasm cannot be loaded from CDN sources.
+1. **Serve over HTTP with the bundled server.** `python -m http.server` does not send
+   `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`, so the page is not
+   cross-origin isolated, `SharedArrayBuffer` is undefined, and the pthread core cannot start.
+   Use `npm run serve` (or `python server.py 8000`).
+2. **Check `public/` is populated.** All four files must exist on the served origin:
+   `ffmpeg.js`, `ffmpeg-core.js`, `ffmpeg-core.wasm`, `ffmpeg-core.worker.js`.
+   A fresh clone has no wasm because `*.wasm` is gitignored — run `npm run setup-ffmpeg`.
+3. **Check the wasm MIME type.** The server must return `application/wasm` for the `.wasm`
+   file; `text/plain` or `application/octet-stream` fails streaming compilation.
+   `server.py` already maps it.
+4. **Never open `index.html` via `file://`.** Workers, ES modules and `SharedArrayBuffer`
+   all break.
 
-#### Solutions (in order of preference):
+Open DevTools → Network and confirm the four requests above return 200 — not the HTML
+page with a 404 underneath, which is the usual cause of
+`SyntaxError: Unexpected token '<'`.
 
-**Option A: Use Local FFmpeg Files (Recommended)**
-```bash
-# Download FFmpeg files locally for better reliability
-npm run setup-ffmpeg
+## "Worker Connection Failed"
 
-# Then rebuild and serve
-npm run build
-npm run serve
-```
+- The worker is spawned by WASM (`src/lib.rs`) and attaches its handlers 200 ms after
+  init. If you see this, check the Console for the Rust-side error first.
+- `ffmpeg-worker.js` is loaded from the page origin; a stale cached copy after an edit
+  shows old behaviour. Hard-reload (Ctrl+Shift+R).
+- The worker needs `public/ffmpeg-core.worker.js`. Missing it gives
+  `SyntaxError: Unexpected token '<'`, because the 404 resolves to `index.html`.
 
-**Option B: Check Internet Connection**
-- Ensure you have a stable internet connection
-- Try refreshing the page
-- Check if your firewall/antivirus is blocking CDN requests
+## Playback never starts for an AVI/MKV
 
-**Option C: Use Supported Formats**
-- Upload MP4, WebM, or OGG files (work without FFmpeg)
-- These formats play directly in the browser
+- Check the status strip. "Connecting live streaming engine…" means the worker has the file
+  but has not emitted its first segment yet.
+- Some files have an unusable container header. The worker emits
+  "Fast copy encountered container error, falling back to progressive streaming…" and retries
+  via the chunked path; if that also fails the log says `Conversion failed: …`.
+- A corrupt or DRM-protected file cannot be decoded. Try a different source.
+- Very large files may exhaust tab memory before the first segment is produced.
 
-**Option D: Manual FFmpeg Setup**
-1. Create a `public` folder in your project
-2. Download these files manually:
-   - [ffmpeg.js](https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.js)
-   - [ffmpeg-core.js](https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.js)
-   - [ffmpeg-core.wasm](https://unpkg.com/@ffmpeg/core@0.12.4/dist/umd/ffmpeg-core.wasm)
-3. Place them in the `public` folder
-4. Restart the server
+## Conversion is slow
 
-### 2. "Worker Connection Failed"
+- Each segment is encoded on a single thread inside one shared FFmpeg core — expect
+  roughly real-time throughput on a laptop CPU.
+- The streaming path is already on `-preset ultrafast -crf 26`, the fastest useful setting.
+- H.264 sources skip encoding entirely via the remux path; if a source is H.264 but still
+  slow, the container header is probably confusing the codec probe.
 
-#### Solutions:
-- Make sure you're serving the files via HTTP server (not file://)
-- Check browser console for detailed error messages
-- Try the test page: `http://localhost:8000/test-streaming.html`
+## Export fails or produces a tiny file
 
-### 3. Video Processing is Slow
+- The export path renders a full MP4 with `-preset fast`. `-preset veryfast` — only that
+  preset — reproduces a hard `RuntimeError: function signature mismatch` inside the pthread
+  pool and kills the core mid-render. If a render produces no output the worker retries once
+  with `ultrafast`.
+- If the log reports "Export render produced no data" after both attempts, the source most
+  likely has no decodable video stream.
 
-#### Optimizations:
-- Use smaller video files for testing
-- The player automatically scales videos to 720p max
-- Large files are processed in chunks to prevent memory issues
+## Subtitles button stays disabled
 
-### 4. Browser Compatibility Issues
+That is correct behaviour: the button only enables when the source actually contains a
+subtitle stream. The log records the reason (`No subtitles: …`). Files with no subtitle
+track never get a placeholder track.
 
-#### Requirements:
-- WebAssembly support (Chrome 57+, Firefox 52+, Safari 11+, Edge 16+)
-- Web Workers support
-- HTML5 Video support
-- File API support
+## Memory issues with large files
 
-#### Solutions:
-- Update your browser to the latest version
-- Try a different browser
-- Check if WebAssembly is enabled in browser settings
+- Streamed containers (AVI, MKV) are buffered in page memory as they convert.
+- Keep test files small; close other tabs; try a lower-resolution source.
 
-### 5. CORS Errors
+## Browser requirements
 
-#### Solutions:
-- Always use `npm run serve` or another HTTP server
-- Never open `index.html` directly in browser (file:// protocol)
-- If using a different server, ensure it serves all file types correctly
+WebAssembly, Web Workers, `SharedArrayBuffer` (cross-origin isolation), HTML5 `<video>`,
+`MediaSource`, and the File API. Chrome/Edge 89+, Firefox 89+.
 
-### 6. Memory Issues with Large Files
+## Reading the log
 
-#### Solutions:
-- The player uses chunked processing for files > 50MB
-- If browser crashes, try smaller files first
-- Close other browser tabs to free memory
-- Consider using a more powerful device for very large files
+**FFmpeg Telemetry** streams the raw FFmpeg output. `Duration:` and `Stream #…` lines are the
+probe; `frame= … time= …` lines are the encoder. `At least one output file must be specified`
+and `Conversion failed!` after a bare `-i <file>` probe are expected noise and are filtered
+out of the panel by the worker.
 
-## Testing and Debugging
+## Still stuck
 
-### Test Worker Connection
-```javascript
-// Open browser console and run:
-const worker = new Worker('./ffmpeg-worker.js');
-worker.postMessage({ type: 'TEST' });
-worker.onmessage = (e) => console.log('Worker response:', e.data);
-```
-
-### Test FFmpeg Loading
-Visit the test page: `http://localhost:8000/test-streaming.html`
-
-### Check Console Logs
-1. Open browser Developer Tools (F12)
-2. Go to Console tab
-3. Look for error messages or warnings
-4. Check Network tab for failed requests
-
-## Format Support Matrix
-
-| Format | Direct Playback | Requires FFmpeg | Notes |
-|--------|----------------|-----------------|-------|
-| MP4    | ✅ Yes         | ❌ No          | Best compatibility |
-| WebM   | ✅ Yes         | ❌ No          | Good for web |
-| OGG    | ✅ Yes         | ❌ No          | Open source |
-| MKV    | ❌ No          | ✅ Yes         | Needs conversion |
-| AVI    | ❌ No          | ✅ Yes         | Needs conversion |
-| MOV    | ⚠️ Maybe       | ⚠️ Maybe       | Browser dependent |
-| WMV    | ❌ No          | ✅ Yes         | Needs conversion |
-| FLV    | ❌ No          | ✅ Yes         | Needs conversion |
-
-## Performance Tips
-
-1. **Use MP4 when possible** - No conversion needed
-2. **Keep files under 100MB** - Better performance
-3. **Close other applications** - Free up system memory
-4. **Use modern browsers** - Better WebAssembly performance
-5. **Stable internet** - For CDN-based FFmpeg loading
-
-## Getting Help
-
-If you're still having issues:
-
-1. Check the browser console for error messages
-2. Try the test page for diagnostics
-3. Test with a small MP4 file first
-4. Ensure you're using a supported browser
-5. Check your internet connection
-
-## Advanced Configuration
-
-### Custom FFmpeg Settings
-Edit `ffmpeg-worker.js` to modify conversion parameters:
-```javascript
-// Example: Higher quality settings
-await ffmpegInstance.exec([
-    '-i', inputFileName,
-    '-c:v', 'libx264',
-    '-preset', 'slow',      // Better quality, slower
-    '-crf', '18',           // Higher quality
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    outputFileName
-]);
-```
-
-### Local Development
-For development without internet:
-1. Run `npm run setup-ffmpeg` once
-2. All FFmpeg files will be cached locally
-3. No internet needed for subsequent runs
+1. Hard-reload and retry with a small MP4 first — it bypasses conversion entirely.
+2. Confirm the four `public/` requests are 200 in the Network tab.
+3. Run `npm test` against the running server and compare against the file you are using.

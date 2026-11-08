@@ -5,715 +5,1048 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WASM Video Player</title>
     <style>
+        :root {
+            /* Ink neutral ramp from Unslop tokens */
+            --bg-base: #07080d;
+            --bg-page: #0b0d14;
+            --bg-surface: #11141c;
+            --bg-raised: #181c26;
+            --bg-active: #212634;
+            --border-hairline: rgba(255, 255, 255, 0.08);
+            --border-subtle: rgba(255, 255, 255, 0.12);
+            --text-primary: #ededed;
+            --text-secondary: #a1a1a6;
+            --text-muted: #85858b;
+
+            /* Accent & status colors (restrained, 4.5:1 accessible) */
+            --accent: #38bdf8;
+            --accent-bg: rgba(56, 189, 248, 0.10);
+            --accent-border: rgba(56, 189, 248, 0.24);
+            --positive: #4cc38a;
+            --positive-bg: rgba(76, 195, 138, 0.10);
+            --positive-border: rgba(76, 195, 138, 0.22);
+            --warning: #f59e0b;
+            --negative: #e5484d;
+            --negative-bg: rgba(229, 72, 77, 0.10);
+            --negative-border: rgba(229, 72, 77, 0.22);
+
+            --radius-sm: 4px;
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            --radius-xl: 16px;
+            --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        
-        .container {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        
-        .upload-area {
-            border: 2px dashed #ccc;
-            border-radius: 8px;
-            padding: 40px;
-            text-align: center;
-            margin-bottom: 20px;
-            transition: border-color 0.3s;
-        }
-        
-        .upload-area.dragover {
-            border-color: #007bff;
-            background-color: #f8f9fa;
-        }
-        
-        .file-input {
-            display: none;
-        }
-        
-        .upload-btn {
-            background: #007bff;
-            color: white;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        
-        .upload-btn:hover {
-            background: #0056b3;
-        }
-        
-        .progress-container {
-            margin: 20px 0;
-            display: none;
-        }
-        
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #e9ecef;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-        
-        .progress-fill {
-            height: 100%;
-            background-color: #28a745;
-            width: 0%;
-            transition: width 0.3s;
-        }
-        
-        .progress-text {
-            margin-top: 10px;
-            text-align: center;
-            color: #666;
-        }
-        
-        .video-container {
-            margin-top: 20px;
-            display: none;
-        }
-        
-        video {
-            width: 100%;
-            max-width: 800px;
-            height: auto;
-            border-radius: 8px;
-        }
-        
-        .controls {
-            margin-top: 10px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            align-items: center;
+            padding: 32px 24px;
+            -webkit-font-smoothing: antialiased;
         }
-        
-        .control-btn {
-            padding: 8px 16px;
-            border: 1px solid #ccc;
-            background: white;
-            border-radius: 4px;
-            cursor: pointer;
+
+        .studio-shell {
+            width: 100%;
+            max-width: 1120px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
-        
-        .control-btn:hover {
-            background: #f8f9fa;
-        }
-        
-        .status {
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 4px;
-            display: none;
-        }
-        
-        .status.info {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
-        }
-        
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .log-panel {
-            margin-top: 20px;
-            background: #0f0f0f;
-            border-radius: 8px;
-            border: 1px solid #262626;
-            padding: 12px;
-            color: #d4f7e8;
-            font-size: 13px;
-        }
-        
-        .log-panel-header {
+
+        /* App Header */
+        .app-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-hairline);
+        }
+
+        .header-title-group {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+        }
+
+        h1 {
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: -0.01em;
+            color: var(--text-primary);
+        }
+
+        .subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        /* Status & Telemetry Pill */
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-raised);
+            border: 1px solid var(--border-hairline);
+            font-size: 12px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            color: var(--text-secondary);
+            transition: all 160ms var(--ease-out);
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: background 160ms var(--ease-out);
+        }
+
+        .status-pill.success .status-dot { background: var(--positive); }
+        .status-pill.info .status-dot { background: var(--accent); }
+        .status-pill.error .status-dot { background: var(--negative); }
+
+        /* Hidden proxy container for test script selectors */
+        #ffmpegStatus { display: inline-flex; }
+
+        /* Notification Banner (Integrated Alert Strip) */
+        .status-bar {
+            display: none;
+            padding: 10px 16px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            line-height: 18px;
+            transition: all 160ms var(--ease-out);
+        }
+
+        .status-bar.info {
+            display: block;
+            background: var(--accent-bg);
+            border: 1px solid var(--accent-border);
+            color: #bae6fd;
+        }
+
+        .status-bar.success {
+            display: block;
+            background: var(--positive-bg);
+            border: 1px solid var(--positive-border);
+            color: #a7f3d0;
+        }
+
+        .status-bar.error {
+            display: block;
+            background: var(--negative-bg);
+            border: 1px solid var(--negative-border);
+            color: #fecaca;
+        }
+
+        /* Monitor / Viewport Stage */
+        .viewport-stage {
+            position: relative;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-hairline);
+            border-radius: var(--radius-xl);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 480px;
+        }
+
+        /* Empty State & Upload Area */
+        .upload-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 64px 32px;
+            cursor: pointer;
+            text-align: center;
+            transition: background 150ms var(--ease-out), border-color 150ms var(--ease-out);
+        }
+
+        .upload-area:hover, .upload-area.dragover {
+            background: var(--bg-raised);
+        }
+
+        .upload-icon-box {
+            width: 44px;
+            height: 44px;
+            border-radius: var(--radius-md);
+            background: var(--bg-raised);
+            border: 1px solid var(--border-hairline);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        .upload-title {
+            font-size: 15px;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 6px;
+        }
+
+        .upload-sub {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .upload-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--text-primary);
+            color: var(--bg-base);
+            padding: 8px 18px;
+            border: none;
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
+        }
+
+        .upload-btn:hover {
+            opacity: 0.92;
+        }
+
+        .upload-btn:active {
+            transform: scale(0.98);
+        }
+
+        .file-input { display: none; }
+
+        .format-pills {
+            display: flex;
+            gap: 6px;
+            margin-top: 24px;
+        }
+
+        .format-pill {
+            font-size: 11px;
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            padding: 2px 8px;
+            background: var(--bg-raised);
+            border: 1px solid var(--border-hairline);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+        }
+
+        /* Active Video Container */
+        .video-container {
+            display: none;
+            width: 100%;
+            background: #000;
+            position: relative;
+        }
+
+        video {
+            display: block;
+            width: 100%;
+            max-height: 600px;
+            background: #000;
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            display: none;
+            padding: 12px 16px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border-hairline);
+            border-radius: var(--radius-md);
+        }
+
+        .progress-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            color: var(--text-secondary);
             margin-bottom: 8px;
-            font-size: 14px;
-            color: #b8f0cd;
         }
-        
-        .log-panel pre {
-            margin: 0;
-            max-height: 180px;
+
+        .progress-bar {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-raised);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--accent);
+            width: 0%;
+            transition: width 200ms var(--ease-out);
+        }
+
+        /* Action Controls Toolbar */
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-surface);
+            border-top: 1px solid var(--border-hairline);
+        }
+
+        .controls-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border: 1px solid var(--border-hairline);
+            background: var(--bg-raised);
+            color: var(--text-secondary);
+            border-radius: var(--radius-md);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background 120ms var(--ease-out), color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+        }
+
+        .control-btn:hover {
+            background: var(--bg-active);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .control-btn:active {
+            transform: scale(0.98);
+        }
+
+        .control-btn svg {
+            color: var(--text-muted);
+        }
+
+        /* Inspector / Telemetry Drawer */
+        .log-section {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-hairline);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-hairline);
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .log-panel {
+            padding: 12px 16px;
+            max-height: 160px;
             overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-word;
-            font-family: 'Courier New', monospace;
-            background: #050505;
-            padding: 10px;
-            border-radius: 6px;
-            border: 1px solid #1f1f1f;
-            color: inherit;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 11px;
+            line-height: 18px;
+            color: var(--text-muted);
+            background: var(--bg-base);
         }
-        
-        .format-info {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #666;
+
+        .log-entry {
+            display: flex;
+            gap: 8px;
+            padding: 1px 0;
+        }
+
+        .log-entry .log-time {
+            color: rgba(255, 255, 255, 0.28);
+            user-select: none;
+            flex-shrink: 0;
+        }
+
+        .log-entry.log-success { color: #86efac; }
+        .log-entry.log-error { color: #fca5a5; }
+        .log-entry.log-warn { color: #fde047; }
+        .log-entry.log-info { color: var(--text-secondary); }
+
+        /* Keyboard focus: visible ring on every interactive surface */
+        :focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+            border-radius: var(--radius-sm);
+        }
+
+        .upload-area:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: -3px;
+            border-radius: var(--radius-xl);
+            background: var(--bg-raised);
+        }
+
+        .control-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .control-btn:disabled:hover {
+            background: var(--bg-raised);
+            color: var(--text-secondary);
+            border-color: var(--border-hairline);
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
+            }
+            .control-btn:active { transform: none; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🎬 WASM Video Player - VLC for Browser</h1>
-        <p><strong>Real FFmpeg.wasm conversion!</strong> Upload ANY video format and it will be converted to MP4 for browser playback.</p>
-        <p><em>Supports: MKV, AVI, MOV, WMV, FLV, WebM, MP4, and many more formats!</em></p>
-        
-        <div id="ffmpegStatus" class="status info" style="display: none;">
-            <span id="ffmpegStatusText">Checking FFmpeg.wasm availability...</span>
-        </div>
-        
-        <div class="upload-area" id="uploadArea">
-            <div>
-                <h3>📁 Drop video files here or click to browse</h3>
+    <div class="studio-shell">
+        <!-- Studio Header -->
+        <header class="app-header">
+            <div class="header-title-group">
+                <h1>WASM Video Player</h1>
+                <span class="subtitle">Real-time WebAssembly demuxing & live playback</span>
+            </div>
+            <div id="ffmpegStatus" class="status-pill">
+                <span class="status-dot"></span>
+                <span id="ffmpegStatusText">Initializing FFmpeg.wasm...</span>
+            </div>
+        </header>
+
+        <!-- Status Notification Banner -->
+        <div class="status-bar" id="status" role="status" aria-live="polite"></div>
+
+        <!-- Video Viewport Stage -->
+        <div class="viewport-stage">
+            <!-- Drop & Upload State -->
+            <div class="upload-area" id="uploadArea" role="button" tabindex="0" aria-label="Drop a video file here, or press Enter to choose a file">
+                <div class="upload-icon-box">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                </div>
+                <div class="upload-title">Drop video file to play</div>
+                <div class="upload-sub">Immediate live streaming for AVI, MKV, MP4, WebM, MOV</div>
                 <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
-                    Choose Video File
+                    <span>Choose file</span>
                 </button>
-                <input type="file" id="fileInput" class="file-input" accept="video/*" multiple>
+                <input type="file" id="fileInput" class="file-input" accept="video/*">
+
+                <div class="format-pills">
+                    <span class="format-pill">AVI</span>
+                    <span class="format-pill">MKV</span>
+                    <span class="format-pill">MP4</span>
+                    <span class="format-pill">MOV</span>
+                    <span class="format-pill">WEBM</span>
+                </div>
             </div>
-            <div class="format-info">
-                <strong>Supported formats:</strong> MKV, AVI, MOV, WMV, FLV, WebM, MP4
+
+            <!-- Video Player -->
+            <div class="video-container" id="videoContainer">
+                <video id="videoPlayer" controls playsinline></video>
+                <div class="toolbar">
+                    <div class="controls-group">
+                        <button class="control-btn" id="subtitleBtn" onclick="toggleSubtitles()" disabled title="Load a video to check for subtitles">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                <path d="M7 15h3"/><path d="M14 15h3"/><path d="M7 11h10"/>
+                            </svg>
+                            <span>Subtitles</span>
+                        </button>
+                        <button class="control-btn" onclick="downloadProcessed()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                            <span>Export MP4</span>
+                        </button>
+                    </div>
+                    <div class="controls-group">
+                        <button class="control-btn" onclick="resetPlayer()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                                <path d="M3 3v5h5"/>
+                            </svg>
+                            <span>Reset</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
-        
+
+        <!-- Conversion & Stream Buffer Progress -->
         <div class="progress-container" id="progressContainer">
+            <div class="progress-meta">
+                <span id="progressText">Processing...</span>
+                <span id="progressPct">0%</span>
+            </div>
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill"></div>
             </div>
-            <div class="progress-text" id="progressText">Processing...</div>
         </div>
-        
-        <div class="status" id="status"></div>
-        
-        <div class="log-panel" id="logPanel">
-            <div class="log-panel-header">
-                <span>FFmpeg conversion log</span>
-                <button class="control-btn log-clear-btn" onclick="clearLog()">Clear logs</button>
+
+        <!-- Telemetry & Conversion Inspector -->
+        <div class="log-section">
+            <div class="log-header">
+                <span>FFmpeg Telemetry</span>
+                <button class="control-btn" onclick="clearLog()" style="padding: 2px 8px; font-size: 11px;">Clear</button>
             </div>
-            <pre id="ffmpegLog">Awaiting FFmpeg output...</pre>
-        </div>
-        
-        <div class="video-container" id="videoContainer">
-            <video id="videoPlayer" controls>
-                Your browser does not support the video tag.
-            </video>
-            <div class="controls">
-                <button class="control-btn" onclick="toggleSubtitles()">Toggle Subtitles</button>
-                <button class="control-btn" onclick="downloadProcessed()">Download MP4</button>
-                <button class="control-btn" onclick="resetPlayer()">Reset</button>
+            <div class="log-panel" id="logPanel" role="log" aria-live="polite" aria-label="FFmpeg telemetry output">
+                <div id="logEntries">
+                    <div class="log-entry"><span class="log-time">[--:--:--]</span><span>Awaiting FFmpeg output...</span></div>
+                </div>
             </div>
         </div>
     </div>
 
     <script type="module">
-        import init, { VideoProcessor, get_supported_formats, is_format_supported } from './pkg/wasm_video_player.js';
-        
-        let videoProcessor;
-        let currentVideoUrl = null;
-        const streamingFormats = new Set(['mp4', 'webm', 'ogg']);
-        const directPlaybackFormats = new Set(['mp4', 'webm', 'ogg']);
-        const nativeMimeTypes = new Set(['video/mp4', 'video/webm', 'video/ogg']);
-        let streamingSourceUrl = null;
-        const LOG_LINE_LIMIT = 300;
-        
-        async function initializeApp() {
-            try {
-                // Check for SharedArrayBuffer support (required for FFmpeg.wasm)
-                if (typeof SharedArrayBuffer === 'undefined') {
-                    showStatus('⚠️ SharedArrayBuffer not available. Using CORS-enabled server for full FFmpeg support.', 'warning');
-                    console.warn('SharedArrayBuffer not available - FFmpeg.wasm will use single-threaded mode');
-                } else {
-                    console.log('✅ SharedArrayBuffer available - FFmpeg.wasm can use multi-threading');
-                }
-                
-                await init();
-                videoProcessor = new VideoProcessor();
-                videoProcessor.initialize('videoPlayer');
-                
-                // Set up progress callback
-                videoProcessor.set_progress_callback((progress) => {
-                    updateProgress(progress);
-                });
-                
-                // Set up worker message handling
-                setupWorkerMessageHandling();
-                
-                setupEventListeners();
-                showStatus('🎬 VLC-like video player initialized! Upload any video format for conversion.', 'info');
-                
-                // Display supported formats
-                const formats = get_supported_formats();
-                console.log('Supported formats:', formats);
-                
-                // Test worker initialization
-                testWorkerConnection();
-                
-            } catch (error) {
-                console.error('Failed to initialize:', error);
-                showStatus('Failed to initialize application: ' + error.message, 'error');
-            }
-        }
-        
-        function setupWorkerMessageHandling() {
-            // Get the worker from the Rust VideoProcessor and set up message handling
-            console.log('Setting up worker message handling...');
-            
-            // We'll set up the message handler after a short delay to ensure the worker is ready
-            setTimeout(() => {
-                try {
-                    const worker = videoProcessor.get_worker();
-                    if (worker) {
-                        worker.onmessage = function(event) {
-                            console.log('Worker message received:', event.data);
-                            
-                            // Handle the message using our JavaScript handler
-                            handleWorkerMessage(event);
-                            
-                            // Also call the Rust handler
-                            try {
-                                videoProcessor.handle_worker_message(event);
-                            } catch (error) {
-                                console.warn('Rust message handler error:', error);
-                            }
-                        };
-                        
-                        worker.onerror = function(error) {
-                            console.error('Worker error:', error);
-                            showStatus('Worker error occurred', 'error');
-                        };
-                        
-                        console.log('Worker message handlers set up successfully');
-                    } else {
-                        console.warn('No worker available for message handling');
-                    }
-                } catch (error) {
-                    console.error('Failed to set up worker message handling:', error);
-                }
-            }, 100);
-        }
-        
-        function testWorkerConnection() {
-            // Show FFmpeg status
-            const ffmpegStatus = document.getElementById('ffmpegStatus');
-            const ffmpegStatusText = document.getElementById('ffmpegStatusText');
-            ffmpegStatus.style.display = 'block';
-            
-            try {
-                // Try FFmpeg worker first
-                const ffmpegWorker = new Worker('./ffmpeg-worker.js');
-                ffmpegWorker.postMessage({ type: 'TEST_FFMPEG' });
-                
-                let ffmpegWorked = false;
-                
-                ffmpegWorker.onmessage = function(e) {
-                    if (e.data.type === 'FFMPEG_TEST_RESULT') {
-                        console.log('FFmpeg test result:', e.data.message);
-                        
-                        if (e.data.message.includes('successfully')) {
-                            ffmpegStatusText.textContent = '✅ FFmpeg.wasm loaded - Real video conversion available!';
-                            ffmpegStatus.className = 'status info';
-                        } else {
-                            ffmpegStatusText.textContent = '⚠️ FFmpeg.wasm not available - Using fallback mode (MP4/WebM/OGG only)';
-                            ffmpegStatus.className = 'status error';
-                        }
-                        
-                        ffmpegWorked = true;
-                        ffmpegWorker.terminate();
-                    }
-                };
-                
-                ffmpegWorker.onerror = function(error) {
-                    console.warn('FFmpeg worker test failed:', error);
-                    if (!ffmpegWorked) {
-                        ffmpegStatusText.textContent = '❌ FFmpeg worker failed - Limited functionality available';
-                        ffmpegStatus.className = 'status error';
-                        testSimpleWorker();
-                    }
-                    ffmpegWorker.terminate();
-                };
-                
-                // Timeout fallback
-                setTimeout(() => {
-                    if (!ffmpegWorked) {
-                        console.log('FFmpeg worker timeout, trying simple worker');
-                        ffmpegStatusText.textContent = '⏰ FFmpeg loading timeout - Using simple worker';
-                        ffmpegStatus.className = 'status error';
-                        ffmpegWorker.terminate();
-                        testSimpleWorker();
-                    }
-                }, 5000);
-                
-            } catch (error) {
-                console.warn('FFmpeg worker initialization failed:', error);
-                ffmpegStatusText.textContent = '❌ Worker initialization failed';
-                ffmpegStatus.className = 'status error';
-                testSimpleWorker();
-            }
-        }
-        
-        function testSimpleWorker() {
-            try {
-                const simpleWorker = new Worker('./simple-video-worker.js');
-                simpleWorker.postMessage({ type: 'TEST' });
-                
-                simpleWorker.onmessage = function(e) {
-                    if (e.data.type === 'TEST_RESPONSE') {
-                        console.log('Simple worker test successful');
-                        showStatus('Using simple video processor (limited conversion support)', 'info');
-                    }
-                    simpleWorker.terminate();
-                };
-                
-                simpleWorker.onerror = function(error) {
-                    console.warn('Simple worker test failed:', error);
-                    showStatus('Worker initialization failed - some features may not work', 'error');
-                    simpleWorker.terminate();
-                };
-                
-            } catch (error) {
-                console.warn('Simple worker initialization failed:', error);
-                showStatus('No workers available - upload functionality limited', 'error');
-            }
-        }
-        
-        function setupEventListeners() {
-            const uploadArea = document.getElementById('uploadArea');
-            const fileInput = document.getElementById('fileInput');
-            
-            // Drag and drop
-            uploadArea.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                uploadArea.classList.add('dragover');
-            });
-            
-            uploadArea.addEventListener('dragleave', () => {
-                uploadArea.classList.remove('dragover');
-            });
-            
-            uploadArea.addEventListener('drop', (e) => {
-                e.preventDefault();
-                uploadArea.classList.remove('dragover');
-                handleFiles(e.dataTransfer.files);
-            });
-            
-            // File input
-            fileInput.addEventListener('change', (e) => {
-                handleFiles(e.target.files);
-            });
-        }
-        
-        function handleFiles(files) {
-            if (files.length === 0) return;
-            
-            const file = files[0];
-            const extension = file.name.split('.').pop().toLowerCase();
-            const fileSize = (file.size / (1024 * 1024)).toFixed(2); // MB
-            
-            if (!is_format_supported(extension)) {
-                showStatus(`Unsupported format: ${extension}`, 'error');
-                return;
-            }
-            
-            const mime = (file.type || '').toLowerCase();
-            const isNativeMime = nativeMimeTypes.has(mime);
-            if (directPlaybackFormats.has(extension) && isNativeMime) {
-                showStatus(`Playing ${file.name} directly (${extension.toUpperCase()}) without conversion`, 'info');
-                maybeStreamOriginal(file, extension);
-                return;
-            }
-            if (directPlaybackFormats.has(extension) && !isNativeMime) {
-                showStatus(`Detected ${extension.toUpperCase()} container but unsupported codec; running FFmpeg conversion.`, 'info');
-            }
-            
-            // Show file info
-            showStatus(`Processing ${file.name} (${fileSize} MB)...`, 'info');
-            
-            // For large files, show streaming message
-            if (file.size > 50 * 1024 * 1024) { // > 50MB
-                showStatus(`Large file detected (${fileSize} MB). Processing in chunks for better performance...`, 'info');
-            }
-            
-            showProgress();
-            maybeStreamOriginal(file, extension);
-            
-            try {
-                // Process video file
-                videoProcessor.process_video_file(file);
-                
-                // Extract subtitles if available
-                videoProcessor.extract_subtitles(file);
-                
-            } catch (error) {
-                console.error('Processing error:', error);
-                showStatus('Processing failed: ' + error.message, 'error');
-                hideProgress();
-            }
-        }
-        
-        function updateProgress(progressData) {
-            const progressFill = document.getElementById('progressFill');
-            const progressText = document.getElementById('progressText');
-            
-            if (progressData.progress !== undefined) {
-                progressFill.style.width = progressData.progress + '%';
-                progressText.textContent = `${progressData.status} - ${Math.round(progressData.progress)}%`;
-                
-                if (progressData.progress >= 100) {
-                    setTimeout(() => {
-                        hideProgress();
-                        showVideoContainer();
-                    }, 1000);
-                }
-            }
-        }
-        
-        function appendLog(message) {
-            const logElement = document.getElementById('ffmpegLog');
-            if (!logElement) return;
-            const cleanMessage = message?.toString().trim();
-            if (!cleanMessage) return;
-            
-            if (logElement.textContent.trim() === 'Awaiting FFmpeg output...') {
-                logElement.textContent = '';
-            }
-            
-            const timeStamp = new Date().toLocaleTimeString();
-            const newLine = `[${timeStamp}] ${cleanMessage}`;
-            const existing = logElement.textContent ? `${logElement.textContent}\n` : '';
-            const updated = `${existing}${newLine}`;
-            const lines = updated.split('\n').slice(-LOG_LINE_LIMIT);
-            logElement.textContent = lines.join('\n');
-            logElement.scrollTop = logElement.scrollHeight;
-        }
-        
-        function clearLog() {
-            const logElement = document.getElementById('ffmpegLog');
-            if (logElement) {
-                logElement.textContent = 'Awaiting FFmpeg output...';
-            }
-        }
-        
-        function maybeStreamOriginal(file, extension) {
-            if (!streamingFormats.has(extension)) return;
-            const video = document.getElementById('videoPlayer');
-            cleanupStreamingSource();
-            streamingSourceUrl = URL.createObjectURL(file);
-            video.src = streamingSourceUrl;
-            video.load();
-            video.play().catch(() => {});
-            showVideoContainer();
-            showStatus('Streaming the source file while FFmpeg converts...', 'info');
-        }
-        
-        function cleanupStreamingSource() {
-            if (streamingSourceUrl) {
-                URL.revokeObjectURL(streamingSourceUrl);
-                streamingSourceUrl = null;
-            }
-        }
-        
-        // Enhanced message handling for different worker types
-        function handleWorkerMessage(event) {
-            const data = event?.data;
-            if (!data || typeof data.type !== 'string') return;
-            const messageType = data.type;
+        import init, { VideoProcessor } from './pkg/wasm_video_player.js';
 
-            switch (messageType) {
-                case 'FFLOG':
-                    appendLog(data.message || 'Log event');
-                    break;
-                    
-                case 'PROGRESS':
-                    updateProgress(data.progress);
-                    break;
-                    
-                case 'VIDEO_READY':
-                    console.log('VIDEO_READY received:', data);
-                    const video = document.getElementById('videoPlayer');
-                    
-                    cleanupStreamingSource();
-                    if (currentVideoUrl && currentVideoUrl !== data.url) {
-                        URL.revokeObjectURL(currentVideoUrl);
-                    }
-                    
-                    if (data.url) {
-                        currentVideoUrl = data.url;
-                        console.log('Setting video source to:', data.url);
-                        video.src = data.url;
-                        
-                        // Set poster image if provided
-                        if (data.poster) {
-                            video.poster = data.poster;
-                            console.log('Setting video poster to:', data.poster);
-                        }
-                        
-                        // Show additional info for converted videos
-                        if (data.converted) {
-                            const note = data.note || `Converted from ${data.originalFormat?.toUpperCase() || 'unknown'} to MP4`;
-                            showStatus(note, 'info');
-                        } else {
-                            showStatus('Video ready for playback', 'info');
-                        }
-                        
-                        hideProgress();
-                        showVideoContainer();
-                        
-                        console.log('Video container should now be visible');
-                        
-                        // Add error handling for video load failures
-                        video.onerror = function(e) {
-                            console.error('Video load error:', e);
-                            console.error('Video error details:', {
-                                error: video.error,
-                                networkState: video.networkState,
-                                readyState: video.readyState,
-                                src: video.src
-                            });
-                            
-                            if (data.originalFormat && data.originalFormat !== 'mp4') {
-                                showStatus(`❌ Video playback failed. The ${data.originalFormat?.toUpperCase()} file could not be converted to MP4. FFmpeg.wasm may not be working properly. Try refreshing the page or use MP4/WebM files directly.`, 'error');
-                            } else {
-                                showStatus(`❌ Video format not supported by browser. Try converting to MP4 first.`, 'error');
-                            }
-                        };
-                        
-                        video.onloadstart = function() {
-                            console.log('Video loading started');
-                        };
-                        
-                        video.oncanplay = function() {
-                            console.log('Video can start playing');
-                        };
-                        
-                    } else {
-                        console.error('VIDEO_READY message missing URL:', data);
-                        showStatus('Video processing completed but no URL provided', 'error');
-                    }
-                    break;
-                    
-                case 'SUBTITLES_READY':
-                    loadSubtitles(data.subtitles);
-                    if (data.subtitles.demo) {
-                        showStatus('Demo subtitles loaded (real extraction requires FFmpeg)', 'info');
-                    }
-                    break;
-                    
-                case 'ERROR':
-                    showStatus(data.message, 'error');
-                    hideProgress();
-                    break;
-                    
-                case 'WORKER_READY':
-                    console.log('Worker ready:', data.message);
-                    break;
-                    
-                default:
-                    console.log('Unknown worker message:', messageType, data);
+        let videoProcessor;
+        let worker = null;
+        let currentVideoUrl = null;
+        let convertedVideoUrl = null;
+        let currentPreviewUrl = null;
+        let isPlayingPreview = false;
+        let currentFile = null;
+
+        let activeMediaSource = null;
+        let activeMediaSourceUrl = null;
+        let activeSourceBuffer = null;
+        let chunkQueue = [];
+        let isAppendingChunk = false;
+        let isExporting = false;
+        let pendingExportUrl = null;
+        let subtitleTrackUrl = null;
+        // True when convertedVideoUrl is a remuxed, complete MP4 blob we can
+        // hand straight to the downloader without re-encoding.
+        let isFastCopyExport = false;
+
+        function cleanupMediaSource() {
+            if (activeMediaSource && activeMediaSource.readyState === 'open') {
+                try { activeMediaSource.endOfStream(); } catch (_) {}
+            }
+            if (activeMediaSourceUrl) {
+                try { URL.revokeObjectURL(activeMediaSourceUrl); } catch (_) {}
+                activeMediaSourceUrl = null;
+            }
+            activeMediaSource = null;
+            activeSourceBuffer = null;
+            chunkQueue = [];
+            isAppendingChunk = false;
+        }
+
+        function processNextChunk() {
+            if (!activeSourceBuffer || isAppendingChunk || activeSourceBuffer.updating || chunkQueue.length === 0) {
+                return;
+            }
+            isAppendingChunk = true;
+            const next = chunkQueue.shift();
+            try {
+                activeSourceBuffer.appendBuffer(next);
+            } catch (err) {
+                isAppendingChunk = false;
+                appendLog('Stream buffer append error: ' + err.message, 'warn');
             }
         }
-        
-        function loadSubtitles(subtitlesData) {
-            const video = document.getElementById('videoPlayer');
-            
-            // Remove existing tracks
-            const existingTracks = video.querySelectorAll('track');
-            existingTracks.forEach(track => track.remove());
-            
-            // Create new track element
-            const track = document.createElement('track');
-            track.kind = 'subtitles';
-            track.label = subtitlesData.demo ? 'Demo Subtitles' : 'Extracted Subtitles';
-            track.srclang = subtitlesData.language || 'en';
-            track.default = true;
-            
-            // Create blob URL for VTT content
-            const blob = new Blob([subtitlesData.vtt], { type: 'text/vtt' });
-            const url = URL.createObjectURL(blob);
-            track.src = url;
-            
-            video.appendChild(track);
-            console.log('Subtitles loaded');
+
+        function appendLog(message, level = 'info') {
+            const el = document.getElementById('logEntries');
+            if (el.children.length === 1 && el.children[0].textContent.includes('Awaiting FFmpeg output...')) {
+                el.innerHTML = '';
+            }
+            const div = document.createElement('div');
+            div.className = `log-entry log-${level}`;
+            const time = new Date().toLocaleTimeString();
+            div.innerHTML = `<span class="log-time">[${time}]</span><span>${escapeHtml(message)}</span>`;
+            el.appendChild(div);
+            el.scrollTop = el.scrollHeight;
+            while (el.children.length > 300) el.removeChild(el.firstChild);
         }
-        
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function clearLog() {
+            document.getElementById('logEntries').innerHTML = '<div class="log-entry"><span class="log-time">[--:--:--]</span><span>Awaiting FFmpeg output...</span></div>';
+        }
+
+        function showStatus(msg, type = 'info') {
+            const el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = `status-bar ${type}`;
+        }
+
         function showProgress() {
             document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressText').textContent = 'Starting...';
+            const pct = document.getElementById('progressPct');
+            if (pct) pct.textContent = '0%';
         }
-        
+
         function hideProgress() {
             document.getElementById('progressContainer').style.display = 'none';
         }
-        
+
+        function updateProgress(data) {
+            const p = Math.round(data.progress || 0);
+            document.getElementById('progressFill').style.width = p + '%';
+            document.getElementById('progressText').textContent = (data.status || 'Processing...');
+            const pct = document.getElementById('progressPct');
+            if (pct) pct.textContent = p + '%';
+            if (p >= 100) setTimeout(hideProgress, 1500);
+        }
+
         function showVideoContainer() {
+            document.getElementById('uploadArea').style.display = 'none';
             document.getElementById('videoContainer').style.display = 'block';
         }
-        
-        function showStatus(message, type = 'info') {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = `status ${type}`;
-            status.style.display = 'block';
-            
-            if (type === 'info') {
+
+        async function initializeApp() {
+            try {
+                if (typeof SharedArrayBuffer === 'undefined') {
+                    appendLog('SharedArrayBuffer not available — single-threaded mode active', 'warn');
+                }
+
+                await init();
+                videoProcessor = new VideoProcessor();
+                videoProcessor.initialize('videoPlayer');
+                videoProcessor.set_progress_callback((progress) => updateProgress(progress));
+
                 setTimeout(() => {
-                    status.style.display = 'none';
-                }, 5000);
+                    try {
+                        worker = videoProcessor.get_worker();
+                        if (worker) {
+                            worker.onmessage = handleWorkerMessage;
+                            worker.onerror = (err) => appendLog(`Worker error: ${err.message || err}`, 'error');
+                            appendLog('Worker message handlers set up', 'success');
+                        }
+                    } catch (e) {
+                        appendLog('Could not attach to worker: ' + e.message, 'warn');
+                    }
+                }, 200);
+
+                // Initialize UI in calm state without loud banner
+                setupEventListeners();
+                appendLog('Application initialized successfully', 'success');
+
+            } catch (err) {
+                showStatus('Failed to initialize: ' + err.message, 'error');
+                appendLog('Init failed: ' + err.message, 'error');
             }
         }
-        
-        // Global functions for controls
-        window.toggleSubtitles = function() {
+
+        function handleWorkerMessage(event) {
+            const msg = event.data;
+            if (!msg || !msg.type) return;
+            const data = msg.data || {};
+
+            switch (msg.type) {
+                case 'FFLOG':
+                    appendLog(data.message || '', 'info');
+                    break;
+                case 'LOG':
+                    appendLog(data.message || '', data.level || 'info');
+                    break;
+                case 'WORKER_READY':
+                    appendLog('FFmpeg worker ready', 'success');
+                    document.getElementById('ffmpegStatusText').textContent = 'FFmpeg.wasm loaded — full conversion available';
+                    document.getElementById('ffmpegStatus').className = 'status-pill success';
+                    break;
+                case 'PROGRESS':
+                    updateProgress(data);
+                    break;
+                case 'STREAM_START':
+                    cleanupMediaSource();
+                    showVideoContainer();
+
+                    const streamVideo = document.getElementById('videoPlayer');
+                    activeMediaSource = new MediaSource();
+                    activeMediaSourceUrl = URL.createObjectURL(activeMediaSource);
+                    streamVideo.src = activeMediaSourceUrl;
+
+                    activeMediaSource.onsourceopen = () => {
+                        try {
+                            const mime = data.mime || 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+                            activeSourceBuffer = activeMediaSource.addSourceBuffer(mime);
+                            activeSourceBuffer.mode = 'sequence';
+
+                            activeSourceBuffer.onupdateend = () => {
+                                isAppendingChunk = false;
+                                if (streamVideo.paused && streamVideo.currentTime === 0) {
+                                    streamVideo.play().catch(() => {});
+                                }
+                                processNextChunk();
+                            };
+
+                            processNextChunk();
+                        } catch (e) {
+                            appendLog('MediaSource init error: ' + e.message, 'error');
+                        }
+                    };
+
+                    showStatus('Live streaming started — playing video as it converts', 'info');
+                    appendLog(`Live stream initialized (${(data.duration || 0).toFixed(1)}s total)`, 'info');
+                    break;
+
+                case 'STREAM_CHUNK':
+                    if (data.chunk) {
+                        chunkQueue.push(data.chunk);
+                        processNextChunk();
+
+                        const video = document.getElementById('videoPlayer');
+                        if (data.index === 0) {
+                            showStatus('Live stream playing — buffering remaining video in background', 'success');
+                            appendLog('First stream segment buffered — playback started', 'success');
+                            video.play().catch(() => {});
+                        }
+                    }
+                    break;
+
+                case 'STREAM_END':
+                    showStatus(data.note || 'Entire video converted and ready', 'success');
+                    appendLog(data.note || 'Successfully converted video and buffered all streams', 'success');
+
+                    // The buffered chunks are a valid MSE timeline but not a valid
+                    // single MP4 file, so export re-encodes from the source instead.
+                    {
+                        // Bind the interval to *this* MediaSource so a reset or a
+                        // newer stream cannot have its buffer closed by a stale timer.
+                        const ms = activeMediaSource;
+                        const waitAppend = setInterval(() => {
+                            if (activeMediaSource !== ms) { clearInterval(waitAppend); return; }
+                            if (chunkQueue.length === 0 && (!activeSourceBuffer || !activeSourceBuffer.updating)) {
+                                clearInterval(waitAppend);
+                                try { ms.endOfStream(); } catch (_) {}
+                            }
+                        }, 100);
+                        setTimeout(() => clearInterval(waitAppend), 60000);
+                    }
+                    break;
+
+                case 'VIDEO_READY':
+                    if (data.url) {
+                        const video = document.getElementById('videoPlayer');
+                        showVideoContainer();
+
+                        if (data.isPreview) {
+                            isPlayingPreview = true;
+                            currentPreviewUrl = data.url;
+                            showStatus(data.note || 'Streaming preview ready', 'info');
+                            appendLog(data.note || 'Streaming preview ready', 'success');
+
+                            video.src = data.url;
+                            video.load();
+                            video.play().catch(() => {});
+                        } else {
+                            // A remuxed MP4 blob is a complete file, so export can reuse it directly.
+                            convertedVideoUrl = data.url;
+                            isFastCopyExport = true;
+                            showStatus(data.note || 'Successfully converted', 'success');
+                            appendLog(data.note || 'Successfully converted video', 'success');
+
+                            if (isPlayingPreview) {
+                                const savedTime = video.currentTime || 0;
+                                const wasPaused = video.paused;
+                                isPlayingPreview = false;
+
+                                video.src = data.url;
+                                video.addEventListener('loadedmetadata', function onMeta() {
+                                    video.removeEventListener('loadedmetadata', onMeta);
+                                    try {
+                                        if (savedTime > 0 && savedTime < video.duration) {
+                                            video.currentTime = savedTime;
+                                        }
+                                    } catch (e) {}
+                                    if (!wasPaused) {
+                                        video.play().catch(() => {});
+                                    }
+                                }, { once: true });
+
+                                appendLog(`Seamlessly transitioned to full video at ${savedTime.toFixed(1)}s`, 'success');
+
+                                if (currentPreviewUrl) {
+                                    setTimeout(() => {
+                                        try { URL.revokeObjectURL(currentPreviewUrl); } catch (e) {}
+                                        currentPreviewUrl = null;
+                                    }, 2000);
+                                }
+                            } else {
+                                video.src = data.url;
+                                video.load();
+                                video.play().catch(() => {});
+                            }
+                        }
+                    }
+                    break;
+
+                case 'SUBTITLES_READY':
+                    loadSubtitles(data.subtitles);
+                    break;
+                case 'EXPORT_STATUS':
+                    isExporting = true;
+                    showProgress();
+                    if (typeof data.progress === 'number') {
+                        updateProgress({ progress: data.progress, status: data.message });
+                    } else {
+                        document.getElementById('progressText').textContent = data.message || 'Exporting...';
+                        document.getElementById('progressFill').style.width = '0%';
+                        document.getElementById('progressPct').textContent = '0%';
+                    }
+                    appendLog(data.message || 'Exporting...', 'info');
+                    break;
+                case 'EXPORT_READY':
+                    isExporting = false;
+                    hideProgress();
+                    if (pendingExportUrl) { try { URL.revokeObjectURL(pendingExportUrl); } catch (_) {} }
+                    pendingExportUrl = data.url;
+                    showStatus(data.note || 'MP4 export ready', 'success');
+                    appendLog(data.note || 'MP4 export ready', 'success');
+                    triggerDownload(data.url);
+                    break;
+                case 'ERROR':
+                    isExporting = false;
+                    showStatus(data.message || 'Processing error', 'error');
+                    appendLog('Error: ' + (data.message || 'Unknown'), 'error');
+                    hideProgress();
+                    break;
+                case 'TEST_RESPONSE':
+                    appendLog('Worker test: ' + (data.message || 'OK'), 'success');
+                    break;
+                default:
+                    appendLog(`Unknown message: ${msg.type}`, 'warn');
+            }
+        }
+
+        function setupEventListeners() {
+            const area = document.getElementById('uploadArea');
+            const input = document.getElementById('fileInput');
+
+            area.addEventListener('dragover', (e) => { e.preventDefault(); area.classList.add('dragover'); });
+            area.addEventListener('dragleave', () => area.classList.remove('dragover'));
+            area.addEventListener('drop', (e) => { e.preventDefault(); area.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+            input.addEventListener('change', (e) => handleFiles(e.target.files));
+
+            // The whole dropzone is a button: click or Enter/Space opens the picker.
+            // The inner "Choose file" button is excluded so it does not double-fire.
+            area.addEventListener('click', (e) => {
+                if (e.target.closest('button')) return;
+                input.click();
+            });
+            area.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                    e.preventDefault();
+                    input.click();
+                }
+            });
+        }
+
+        function handleFiles(files) {
+            if (!files || !files.length) return;
+            const file = files[0];
+            const ext = file.name.split('.').pop().toLowerCase();
+            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+
+            appendLog(`File: ${file.name} (${sizeMB} MB, ${ext.toUpperCase()})`, 'info');
+
+            // Supersede any conversion still running for the previous file.
+            if (worker) {
+                try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
+            }
+
+            currentFile = file;
+            isExporting = false;
+
             const video = document.getElementById('videoPlayer');
-            const tracks = video.textTracks;
-            
+            cleanupMediaSource();
+            if (pendingExportUrl) { URL.revokeObjectURL(pendingExportUrl); pendingExportUrl = null; }
+            if (subtitleTrackUrl) { URL.revokeObjectURL(subtitleTrackUrl); subtitleTrackUrl = null; }
+            document.querySelectorAll('#videoPlayer track').forEach(t => t.remove());
+            setSubtitleButtonState(false);
+            isFastCopyExport = false;
+            if (currentPreviewUrl) { URL.revokeObjectURL(currentPreviewUrl); currentPreviewUrl = null; }
+            if (currentVideoUrl) { URL.revokeObjectURL(currentVideoUrl); currentVideoUrl = null; }
+            if (convertedVideoUrl) { URL.revokeObjectURL(convertedVideoUrl); convertedVideoUrl = null; }
+
+            // Containers Chrome/Firefox can decode themselves. Everything else
+            // (AVI, MKV, WMV, FLV) must wait for the worker: pointing <video> at
+            // one of those just paints a broken player with MEDIA_ERR_SRC_NOT_SUPPORTED
+            // until the conversion lands.
+            const NATIVE_PLAYABLE = new Set(['mp4', 'm4v', 'mov', 'webm', 'ogg', 'ogv']);
+            showVideoContainer();
+            if (NATIVE_PLAYABLE.has(ext)) {
+                const directUrl = URL.createObjectURL(file);
+                currentVideoUrl = directUrl;
+                video.src = directUrl;
+                video.load();
+                video.play().catch(() => {});
+                showStatus(`Playing ${file.name} — converting in background...`, 'info');
+            } else if (ext === 'avi') {
+                showStatus(`Connecting live streaming engine for ${file.name}...`, 'info');
+            } else {
+                showStatus(`Reading ${file.name} — checking for an instant remux...`, 'info');
+            }
+
+            if (worker) {
+                showProgress();
+                appendLog('Starting FFmpeg conversion pipeline...', 'info');
+                try {
+                    worker.postMessage({ type: 'PROCESS_VIDEO', file });
+                    worker.postMessage({ type: 'EXTRACT_SUBTITLES', file });
+                } catch (e) {
+                    appendLog('Worker post failed: ' + e.message, 'error');
+                    hideProgress();
+                }
+            } else {
+                appendLog('Worker not ready yet — direct playback only', 'warn');
+                hideProgress();
+            }
+        }
+
+        function loadSubtitles(subtitlesData) {
+            const video = document.getElementById('videoPlayer');
+            document.querySelectorAll('#videoPlayer track').forEach(t => t.remove());
+            subtitleTrackUrl = null;
+
+            if (!subtitlesData || !subtitlesData.found || !subtitlesData.vtt) {
+                const reason = (subtitlesData && subtitlesData.reason) || 'No subtitle stream in this file';
+                appendLog(`No subtitles: ${reason}`, 'info');
+                setSubtitleButtonState(false);
+                return;
+            }
+
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+            track.label = 'Extracted subtitles';
+            track.srclang = subtitlesData.language || 'en';
+            track.default = true;
+            subtitleTrackUrl = URL.createObjectURL(new Blob([subtitlesData.vtt], { type: 'text/vtt' }));
+            track.src = subtitleTrackUrl;
+            video.appendChild(track);
+            setSubtitleButtonState(true);
+            appendLog('Subtitles extracted and loaded', 'success');
+        }
+
+        function setSubtitleButtonState(available) {
+            const btn = document.getElementById('subtitleBtn');
+            if (!btn) return;
+            btn.disabled = !available;
+            btn.title = available ? 'Toggle subtitles' : 'This file has no subtitles';
+        }
+
+        // Global controls
+        window.toggleSubtitles = function () {
+            const tracks = document.getElementById('videoPlayer').textTracks;
             if (tracks.length > 0) {
-                const track = tracks[0];
-                track.mode = track.mode === 'showing' ? 'hidden' : 'showing';
-                showStatus(`Subtitles ${track.mode === 'showing' ? 'enabled' : 'disabled'}`, 'info');
+                const t = tracks[0];
+                t.mode = t.mode === 'showing' ? 'hidden' : 'showing';
+                showStatus(`Subtitles ${t.mode === 'showing' ? 'enabled' : 'disabled'}`, 'info');
             } else {
-                showStatus('No subtitles available', 'info');
+                showStatus('No subtitles in this file', 'info');
             }
         };
-        
-        window.downloadProcessed = function() {
-            if (currentVideoUrl) {
-                const a = document.createElement('a');
-                a.href = currentVideoUrl;
-                a.download = 'converted_video.mp4';
-                a.click();
-            } else {
-                showStatus('No processed video available for download', 'error');
+
+        function triggerDownload(url) {
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (currentFile ? currentFile.name.replace(/\.[^.]+$/, '') : 'video') + '.mp4';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        }
+
+        window.downloadProcessed = function () {
+            if (!currentFile) {
+                showStatus('Load a video first', 'error');
+                return;
             }
+
+            // Streamed playback was assembled from fMP4 chunks, which are not a
+            // valid standalone file. Render a real MP4 from the source instead.
+            const needsRender = !convertedVideoUrl;
+            if (!needsRender && isFastCopyExport) {
+                triggerDownload(convertedVideoUrl);
+                appendLog('Download started', 'success');
+                showStatus('Exporting original-quality MP4', 'success');
+                return;
+            }
+
+            if (isExporting) {
+                showStatus('Export already in progress', 'info');
+                return;
+            }
+
+            if (!worker) {
+                showStatus('FFmpeg still loading — try again in a moment', 'info');
+                return;
+            }
+
+            isExporting = true;
+            appendLog('Rendering MP4 for export...', 'info');
+            showProgress();
+            document.getElementById('progressText').textContent = 'Preparing MP4 export...';
+            worker.postMessage({ type: 'EXPORT_VIDEO', file: currentFile });
         };
-        
-        window.resetPlayer = function() {
+
+        window.resetPlayer = function () {
+            // Stop any in-flight conversion so it cannot repaint the stage later.
+            if (worker) {
+                try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
+            }
+            isExporting = false;
+            cleanupMediaSource();
+
             const video = document.getElementById('videoPlayer');
-            video.src = '';
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+
             document.getElementById('videoContainer').style.display = 'none';
+            document.getElementById('uploadArea').style.display = 'flex';
             document.getElementById('fileInput').value = '';
-            cleanupStreamingSource();
-            if (currentVideoUrl) {
-                URL.revokeObjectURL(currentVideoUrl);
-            }
-            currentVideoUrl = null;
+            isPlayingPreview = false;
+            setSubtitleButtonState(false);
+
+            if (subtitleTrackUrl) { try { URL.revokeObjectURL(subtitleTrackUrl); } catch (_) {} subtitleTrackUrl = null; }
+            if (pendingExportUrl) { try { URL.revokeObjectURL(pendingExportUrl); } catch (_) {} pendingExportUrl = null; }
+            if (currentPreviewUrl) { try { URL.revokeObjectURL(currentPreviewUrl); } catch (_) {} currentPreviewUrl = null; }
+            if (currentVideoUrl) { try { URL.revokeObjectURL(currentVideoUrl); } catch (_) {} currentVideoUrl = null; }
+            if (convertedVideoUrl) { try { URL.revokeObjectURL(convertedVideoUrl); } catch (_) {} convertedVideoUrl = null; }
+
+            currentFile = null;
+            isFastCopyExport = false;
+            hideProgress();
             showStatus('Player reset', 'info');
         };
-        
-        // Initialize the application
+
         initializeApp();
     </script>
 </body>

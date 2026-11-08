@@ -1,37 +1,140 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Quick FFmpeg Test</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FFmpeg Diagnostics — WASM Video Player</title>
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #07080d;
+            color: #ededed;
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 32px 24px;
+            line-height: 1.6;
+        }
+        h1 { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+        p.lede { color: #85858b; font-size: 13px; margin-bottom: 20px; }
+        table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 20px; }
+        td { padding: 6px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+        td:first-child { color: #a1a1a6; width: 45%; }
+        .ok { color: #4cc38a; }
+        .bad { color: #e5484d; }
+        button {
+            font: inherit;
+            font-size: 13px;
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: #181c26;
+            color: #ededed;
+            cursor: pointer;
+        }
+        button:hover { background: #212634; }
+        pre {
+            background: #11141c;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 12px;
+            max-height: 320px;
+            overflow: auto;
+            white-space: pre-wrap;
+            margin-top: 16px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Quick FFmpeg Test</h1>
-    <div id="output"></div>
-    <button onclick="testWorker()">Test Worker</button>
-    
+    <h1>FFmpeg diagnostics</h1>
+    <p class="lede">
+        Checks the environment the player needs. All rows must read OK before the main page
+        can convert anything.
+    </p>
+
+    <table>
+        <tr><td>Origin</td><td id="origin">—</td></tr>
+        <tr><td>Cross-origin isolated</td><td id="isolation">—</td></tr>
+        <tr><td>SharedArrayBuffer</td><td id="sab">—</td></tr>
+        <tr><td>MediaSource</td><td id="mse">—</td></tr>
+        <tr><td>H.264/AAC MP4 support</td><td id="codecs">—</td></tr>
+        <tr><td>ffmpeg-core.wasm reachable</td><td id="wasm">—</td></tr>
+        <tr><td>FFmpeg worker load</td><td id="worker">not started</td></tr>
+    </table>
+
+    <button id="run">Load FFmpeg worker</button>
+    <pre id="log">Ready.</pre>
+
     <script>
-        const output = document.getElementById('output');
-        
-        function log(message) {
-            output.innerHTML += message + '<br>';
-            console.log(message);
-        }
-        
-        function testWorker() {
-            log('Testing FFmpeg worker...');
-            
+        const logEl = document.getElementById('log');
+        const set = (id, text, ok) => {
+            const el = document.getElementById(id);
+            el.textContent = text;
+            el.className = ok === true ? 'ok' : ok === false ? 'bad' : '';
+        };
+        const log = (msg) => {
+            logEl.textContent += '\n' + msg;
+            logEl.scrollTop = logEl.scrollHeight;
+        };
+
+        set('origin', location.origin);
+        set('isolation', String(self.crossOriginIsolated),
+            self.crossOriginIsolated === true);
+        set('sab', typeof SharedArrayBuffer !== 'undefined' ? 'available' : 'missing',
+            typeof SharedArrayBuffer !== 'undefined');
+        set('mse', typeof MediaSource !== 'undefined' ? 'available' : 'missing',
+            typeof MediaSource !== 'undefined');
+
+        const mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+        const codecOk = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported(mime);
+        set('codecs', codecOk ? mime : 'not supported', codecOk);
+
+        fetch('./public/ffmpeg-core.wasm', { method: 'HEAD' })
+            .then((r) => {
+                const type = r.headers.get('content-type') || '(none)';
+                const ok = r.ok && type.includes('wasm');
+                set('wasm', `${r.status} ${type}`, ok);
+                if (!ok) log('Expected application/wasm. Use server.py, not python -m http.server.');
+            })
+            .catch((err) => {
+                set('wasm', err.message, false);
+                log('wasm fetch failed: ' + err.message);
+            });
+
+        document.getElementById('run').addEventListener('click', () => {
+            set('worker', 'loading…');
+            log('Starting ./ffmpeg-worker.js …');
+
             const worker = new Worker('./ffmpeg-worker.js');
-            
-            worker.onmessage = function(e) {
-                log('Worker response: ' + JSON.stringify(e.data));
+            const timeout = setTimeout(() => {
+                set('worker', 'timeout after 60s', false);
+                log('No response in 60s. Check the Network tab for public/ requests.');
+            }, 60000);
+
+            worker.onmessage = (e) => {
+                const msg = e.data || {};
+                const data = msg.data || {};
+                if (msg.type === 'LOG') log(data.message);
+                if (msg.type === 'FFLOG') return; // raw FFmpeg noise
+                if (msg.type === 'WORKER_READY') {
+                    clearTimeout(timeout);
+                    set('worker', 'loaded', true);
+                    log('Worker ready — conversion available.');
+                }
+                if (msg.type === 'ERROR') {
+                    clearTimeout(timeout);
+                    set('worker', 'failed', false);
+                    log('ERROR: ' + (data.message || 'unknown'));
+                }
             };
-            
-            worker.onerror = function(error) {
-                log('Worker error: ' + error.message);
+            worker.onerror = (err) => {
+                clearTimeout(timeout);
+                set('worker', 'worker error', false);
+                log('Worker error: ' + (err.message || err));
             };
-            
-            // Test FFmpeg loading
-            worker.postMessage({ type: 'TEST_FFMPEG' });
-        }
+        });
     </script>
 </body>
 </html>

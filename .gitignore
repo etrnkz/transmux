@@ -29,3 +29,6 @@ build/
 
 # Logs
 *.log
+
+# Local tooling / scratch
+.playwright-cli/

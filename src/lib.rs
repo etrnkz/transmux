@@ -60,18 +60,8 @@ impl VideoProcessor {
         self.video_element = Some(video_element);
         
         // Try to initialize FFmpeg worker first, fall back to simple worker
-        let worker_result = Worker::new("./ffmpeg-worker.js");
-        
-        let worker = match worker_result {
-            Ok(w) => {
-                console_log!("✅ FFmpeg worker initialized successfully");
-                w
-            },
-            Err(e) => {
-                console_log!("❌ FFmpeg worker failed: {:?}, using simple worker", e);
-                Worker::new("./simple-video-worker.js")?
-            }
-        };
+        let worker = Worker::new("./ffmpeg-worker.js")?;
+        console_log!("FFmpeg worker initialized");
         
         self.worker = Some(worker);
         
