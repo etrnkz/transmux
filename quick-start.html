@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Embedded Player — WASM Video Player</title>
+
+    <!-- The player's stylesheet is scoped to .wvp-root, so it cannot leak into
+         this page. Everything else below is host page styling. -->
+    <link rel="stylesheet" href="./wasm-video-player.css">
+
+    <style>
+        :root { color-scheme: dark; }
+
+        body {
+            margin: 0;
+            padding: 40px 24px 64px;
+            background: #07080d;
+            color: #ededed;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .page {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .eyebrow {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #85858b;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            font-size: 26px;
+            font-weight: 500;
+            letter-spacing: -0.02em;
+            margin: 0 0 8px;
+        }
+
+        .lede {
+            font-size: 14px;
+            line-height: 22px;
+            color: #a1a1a6;
+            margin: 0 0 28px;
+            max-width: 60ch;
+        }
+
+        .lede code {
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            font-size: 12px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            background: #181c26;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #ededed;
+        }
+
+        #player-slot {
+            /* The mount point: the player builds its whole UI inside this. */
+        }
+
+        .note {
+            margin-top: 28px;
+            padding: 14px 16px;
+            border-radius: 8px;
+            background: #11141c;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 13px;
+            line-height: 20px;
+            color: #a1a1a6;
+        }
+
+        .note strong { color: #ededed; font-weight: 500; }
+
+        .note pre {
+            margin: 10px 0 0;
+            padding: 12px;
+            border-radius: 6px;
+            background: #07080d;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            font-size: 11.5px;
+            line-height: 18px;
+            color: #a1a1a6;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <div class="eyebrow">Embedded instance</div>
+        <h1>Drop-in video player</h1>
+        <p class="lede">
+            This page holds no player logic of its own — it mounts one with a
+            single <code>createPlayer()</code> call. AVI, MKV, WMV and FLV are
+            transcoded by FFmpeg.wasm while they play; MP4, MOV and WebM go
+            straight to the browser.
+        </p>
+
+        <div id="player-slot"></div>
+
+        <div class="note">
+            <strong>Embedding it somewhere else.</strong> The worker and the
+            FFmpeg core are located by URL, so the player also runs from a
+            subdirectory or another origin. Pass both paths explicitly:
+            <pre>createPlayer({
+  container: el,
+  workerUrl: '/vendor/wvp/ffmpeg-worker.js',
+  coreBaseUrl: '/vendor/wvp/public'
+});</pre>
+            The page serving it must send
+            <code>Cross-Origin-Opener-Policy: same-origin</code> and
+            <code>Cross-Origin-Embedder-Policy: require-corp</code>.
+        </div>
+    </main>
+
+    <script type="module">
+        import { createPlayer } from './wasm-video-player.js';
+
+        const player = createPlayer({
+            container: document.getElementById('player-slot'),
+            workerUrl: './ffmpeg-worker.js',
+            coreBaseUrl: './public',
+            title: 'WASM Video Player',
+            subtitle: 'Real-time WebAssembly demuxing & live playback'
+        });
+
+        // Host-side hooks. Optional, but they show the whole surface a page can
+        // observe without reaching into the player's internals.
+        player.on('ready', () => console.log('[quick-start] FFmpeg core ready'));
+        player.on('error', (e) => console.warn('[quick-start] player error:', e && e.message));
+
+        window.player = player;
+    </script>
+</body>
+</html>

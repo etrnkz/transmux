@@ -4,6 +4,32 @@ self.document = { baseURI: self.location.href };
 let ffmpeg = null;
 let isLoaded = false;
 let fetchFileFunc = null;
+let createFFmpegFunc = null;
+
+// Where the FFmpeg.wasm assets live. Defaults are resolved from this worker's
+// own URL, so the player works when served from a subdirectory instead of only
+// from the site root. Any value can be overridden with a query parameter on the
+// worker URL (e.g. `ffmpeg-worker.js?coreBase=https://cdn.example/ffmpeg`),
+// which is how the player factory injects a cross-origin/CDN location. Reading
+// them here — synchronously, at module evaluation — means the config is in place
+// before the automatic loadFFmpeg() call at the bottom of this file, so there is
+// no startup race between "worker ready" and "paths configured".
+const CONFIG = (function resolveConfig() {
+  const params = new URL(self.location.href).searchParams;
+  const trim = (s) => String(s).replace(/\/+$/, '');
+  // ./public/ sits next to this worker in this repo; overridable for packaging.
+  const defaultBase = trim(new URL('./public', self.location.href).href);
+  const base = trim(params.get('coreBase') || defaultBase);
+
+  return {
+    // The ffmpeg.wasm wrapper (importScripts). Separate knob because a host may
+    // keep the wrapper local while pulling the 24 MB core from a CDN.
+    ffmpegJs: params.get('ffmpegJs') || base + '/ffmpeg.js',
+    corePath: params.get('corePath') || base + '/ffmpeg-core.js',
+    wasmPath: params.get('wasmPath') || base + '/ffmpeg-core.wasm',
+    workerPath: params.get('workerPath') || base + '/ffmpeg-core.worker.js'
+  };
+})();
 
 function post(type, data) {
   try { self.postMessage({ type, data }); } catch (e) {}
@@ -15,12 +41,24 @@ const defaultLogger = ({ message }) => {
   }
 };
 
+// Resolved once the core finished loading *or* failed to load. Jobs wait on it
+// so a freshly spawned/reloaded worker can be handed work immediately instead
+// of answering "FFmpeg not loaded" during its ~1.5s startup.
+let markReady = () => {};
+let readyPromise = Promise.resolve();
+function resetReady() {
+  readyPromise = new Promise((resolve) => { markReady = resolve; });
+}
+
 // Sequential task queue to prevent concurrent ffmpeg.run() calls
 let taskQueue = Promise.resolve();
 function enqueueTask(taskFn) {
-  taskQueue = taskQueue.then(taskFn).catch(err => {
-    post('ERROR', { message: `Task failed: ${err.message || err}` });
-  });
+  taskQueue = taskQueue
+    .then(() => readyPromise)
+    .then(taskFn)
+    .catch(err => {
+      post('ERROR', { message: `Task failed: ${err.message || err}` });
+    });
   return taskQueue;
 }
 
@@ -35,10 +73,9 @@ async function loadFFmpeg() {
   try {
     post('LOG', { message: 'Loading FFmpeg.wasm from local files...', level: 'info' });
 
-    importScripts('./public/ffmpeg.js');
+    importScripts(CONFIG.ffmpegJs);
 
-    let createFFmpegFunc = null;
-    if (typeof self.FFmpeg !== 'undefined' && self.FFmpeg.createFFmpeg) {
+    if (self.FFmpeg && self.FFmpeg.createFFmpeg) {
       createFFmpegFunc = self.FFmpeg.createFFmpeg;
       fetchFileFunc = self.FFmpeg.fetchFile;
     } else if (typeof FFmpeg !== 'undefined' && FFmpeg.createFFmpeg) {
@@ -55,10 +92,9 @@ async function loadFFmpeg() {
       fetchFileFunc = (file) => file.arrayBuffer().then(buf => new Uint8Array(buf));
     }
 
-    const origin = self.location.origin;
-    const corePath = origin + '/public/ffmpeg-core.js';
-    const wasmPath = origin + '/public/ffmpeg-core.wasm';
-    const workerPath = origin + '/public/ffmpeg-core.worker.js';
+    const corePath = CONFIG.corePath;
+    const wasmPath = CONFIG.wasmPath;
+    const workerPath = CONFIG.workerPath;
 
     ffmpeg = createFFmpegFunc({
       log: true,
@@ -71,17 +107,98 @@ async function loadFFmpeg() {
 
     await ffmpeg.load();
     isLoaded = true;
+    markReady(true);
 
     post('LOG', { message: 'FFmpeg.wasm loaded successfully!', level: 'success' });
     post('WORKER_READY', { message: 'FFmpeg worker ready for conversions' });
 
   } catch (err) {
+    markReady(false);
     post('LOG', { message: `FFmpeg load failed: ${err.message}`, level: 'error' });
     post('ERROR', { message: `FFmpeg initialization failed: ${err.message}` });
   }
 }
 
-async function convertVideo(file, token) {
+// FFmpeg.wasm has no abort, so interrupting a running exec is done by the page
+// terminating this worker and spawning a fresh one (see resetPlayer). A new
+// worker re-runs this module body, so resetReady()/loadFFmpeg() below is all the
+// core state that needs restoring.
+
+// ffmpeg's audio map is indexed among audio streams, not overall streams, so
+// track 1 means "the second audio stream" regardless of where video/subs sit.
+const DEFAULT_AUDIO_TRACK = 0;
+
+function audioMapArgs(track) {
+  const i = Number.isInteger(track) && track >= 0 ? track : DEFAULT_AUDIO_TRACK;
+  // `?` makes the map optional, so a file with no audio streams still converts
+  // instead of dying on "Stream map '0:a:N' matches no streams".
+  return ['-map', '0:v:0', '-map', `0:a:${i}?`];
+}
+
+// Chunk duration is a latency/memory trade: small chunks start playback sooner,
+// long videos need bigger chunks so the per-chunk encoder setup does not
+// dominate. Also clamp by bitrate so a high-bitrate source cannot produce
+// multi-megabyte chunks that stall the MediaSource queue.
+const MAX_CHUNK_BYTES = 12 * 1024 * 1024;
+function chooseChunkSeconds(duration, sizeBytes) {
+  const base = duration <= 60 ? 6 : duration <= 300 ? 10 : duration <= 1800 ? 15 : 20;
+  const bytesPerSecond = duration > 0 && sizeBytes > 0 ? sizeBytes / duration : 0;
+  if (bytesPerSecond > 0) {
+    const cap = Math.floor(MAX_CHUNK_BYTES / bytesPerSecond);
+    if (cap >= 2 && cap < base) return cap;
+  }
+  return base;
+}
+
+// One `ffmpeg -i` call buys codec, duration and the audio track list. Everything
+// downstream (fast remux, streaming, export) reads from this, and the UI gets
+// the track list before any encoding starts.
+async function probeMedia(inputName) {
+  const info = { isH264: false, duration: 0, audioTracks: [] };
+
+  const probeLogger = ({ message }) => {
+    if (!message) return;
+    // `ffmpeg -i <file>` with no output always "fails"; that line is expected noise
+    if (/Conversion failed!|At least one output file must be specified/i.test(message)) return;
+
+    if (/Stream #.*Video:.*(h264|avc1)/i.test(message)) info.isH264 = true;
+
+    const dur = message.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+    if (dur) {
+      info.duration = parseInt(dur[1]) * 3600 + parseInt(dur[2]) * 60 + parseFloat(dur[3]);
+    }
+
+    const audio = message.match(/Stream #\d+:(\d+)(?:\[[^\]]*\])?(?:\(([^)]+)\))?: Audio: ([^,\s]+)(.*)$/);
+    if (audio) {
+      const rest = audio[4] || '';
+      const channels = rest.match(/\b(mono|stereo|quad|5\.1|7\.1)\b/);
+      info.audioTracks.push({
+        index: info.audioTracks.length,
+        streamIndex: parseInt(audio[1]),
+        lang: (audio[2] || '').toLowerCase() || null,
+        codec: audio[3],
+        channels: channels ? channels[1] : null,
+        isDefault: /\(default\)/.test(rest)
+      });
+    }
+  };
+
+  ffmpeg.setLogger(probeLogger);
+  try { await ffmpeg.run('-i', inputName); } catch (_) {}
+  ffmpeg.setLogger(defaultLogger);
+
+  return info;
+}
+
+// Picks the track to encode: what the user asked for if it still exists,
+// otherwise the first track. null means "this file has no audio".
+function resolveAudioTrack(tracks, requested) {
+  if (!tracks || tracks.length === 0) return null;
+  if (Number.isInteger(requested) && requested >= 0 && requested < tracks.length) return requested;
+  return DEFAULT_AUDIO_TRACK;
+}
+
+async function convertVideo(file, token, requestedTrack) {
   if (!isLoaded || !ffmpeg) {
     post('ERROR', { message: 'FFmpeg not loaded' });
     return;
@@ -105,28 +222,25 @@ async function convertVideo(file, token) {
       return;
     }
 
-    // STEP 0: Fast Probe video codec & duration
+    // STEP 0: probe codec, duration and audio tracks in one pass
     post('PROGRESS', { progress: 10, status: 'Analyzing video stream & duration...', current_time: 0, duration: 0 });
-    let isH264 = false;
-    let duration = 0;
 
-    const probeLogger = ({ message }) => {
-      if (!message) return;
-      // `ffmpeg -i <file>` with no output always "fails"; that line is expected noise
-      if (/Conversion failed!|At least one output file must be specified/i.test(message)) return;
-      if (/Stream #.*Video:.*(h264|avc1)/i.test(message)) isH264 = true;
-      const m = message.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
-      if (m) duration = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-    };
-
-    ffmpeg.setLogger(probeLogger);
-    try { await ffmpeg.run('-i', inputName); } catch (_) {}
-    ffmpeg.setLogger(defaultLogger);
+    const info = await probeMedia(inputName);
+    const isH264 = info.isH264;
 
     // If duration could not be determined, assume at least 15s
+    let duration = info.duration;
     if (!duration || duration <= 0) {
       duration = 30;
     }
+
+    const selectedAudio = resolveAudioTrack(info.audioTracks, requestedTrack);
+    post('AUDIO_TRACKS', {
+      tracks: info.audioTracks,
+      selected: selectedAudio === null ? -1 : selectedAudio,
+      originalFormat: ext
+    });
+
 
     if (isCancelled(token)) {
       try { ffmpeg.FS('unlink', inputName); } catch (_) {}
@@ -141,6 +255,7 @@ async function convertVideo(file, token) {
       try {
         await ffmpeg.run(
           '-i', inputName,
+          ...audioMapArgs(selectedAudio),
           '-c:v', 'copy',
           '-c:a', 'aac',
           '-b:a', '128k',
@@ -181,9 +296,9 @@ async function convertVideo(file, token) {
     }
 
     // STEP 2: Live Progressive Streaming via MediaSource (fMP4 chunks)
-    post('FFLOG', { message: `Starting live progressive stream (Duration: ${duration.toFixed(1)}s)...` });
+    const chunkSize = chooseChunkSeconds(duration, file.size);
+    post('FFLOG', { message: `Starting live progressive stream (${duration.toFixed(1)}s, ${chunkSize}s chunks)...` });
 
-    const chunkSize = 6; // 6-second slices convert in ~0.4s
     const totalChunks = Math.max(1, Math.ceil(duration / chunkSize));
 
     post('STREAM_START', {
@@ -214,11 +329,15 @@ async function convertVideo(file, token) {
         '-ss', String(startSec),
         '-t', String(chunkSize),
         '-i', inputName,
+        ...audioMapArgs(selectedAudio),
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
         '-crf', '26',
         '-c:a', 'aac',
         '-b:a', '96k',
+        // Presentation timestamps must not restart at 0 in every segment, or the
+        // sequence-mode timeline gets discontinuities on longer videos.
+        '-avoid_negative_ts', 'make_zero',
         '-f', 'mp4',
         '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
         '-pix_fmt', 'yuv420p',
@@ -254,7 +373,7 @@ async function convertVideo(file, token) {
 
 // Full-file MP4 render, used for download when playback came from the
 // chunked streaming path (concatenated fMP4 chunks are not a valid timeline).
-async function exportMp4(file, token) {
+async function exportMp4(file, token, requestedTrack) {
   if (!isLoaded || !ffmpeg) {
     post('ERROR', { message: 'FFmpeg not loaded' });
     return;
@@ -278,15 +397,9 @@ async function exportMp4(file, token) {
     }
 
     // Progress is measured against the source duration so the bar is honest.
-    let duration = 0;
-    const probeLogger = ({ message }) => {
-      if (!message) return;
-      const m = message.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
-      if (m) duration = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-    };
-    ffmpeg.setLogger(probeLogger);
-    try { await ffmpeg.run('-i', inputName); } catch (_) {}
-    ffmpeg.setLogger(defaultLogger);
+    const info = await probeMedia(inputName);
+    const duration = info.duration;
+    const selectedAudio = resolveAudioTrack(info.audioTracks, requestedTrack);
 
     const progressLogger = ({ message }) => {
       const m = message && message.match(/time=\s*(\d+):(\d+):([\d.]+)/);
@@ -303,6 +416,7 @@ async function exportMp4(file, token) {
     // ultrafast retry in case a future core build regresses differently.
     const renderArgs = (preset) => [
       '-i', inputName,
+      ...audioMapArgs(selectedAudio),
       '-c:v', 'libx264',
       '-preset', preset,
       '-crf', '23',
@@ -416,7 +530,7 @@ async function extractSubtitles(file, token) {
 }
 
 self.onmessage = function (e) {
-  const { type, file } = e.data;
+  const { type, file, audioTrack } = e.data;
   try {
     switch (type) {
       case 'TEST':
@@ -432,7 +546,7 @@ self.onmessage = function (e) {
       case 'PROCESS_VIDEO': {
         // A new job supersedes whatever ran before it.
         const token = ++jobSerial;
-        enqueueTask(() => convertVideo(file, token));
+        enqueueTask(() => convertVideo(file, token, audioTrack));
         break;
       }
       case 'EXTRACT_SUBTITLES': {
@@ -445,11 +559,16 @@ self.onmessage = function (e) {
       case 'EXPORT_VIDEO': {
         // Same capture rule: a newer upload must abandon a queued export.
         const token = jobSerial;
-        enqueueTask(() => exportMp4(file, token));
+        enqueueTask(() => exportMp4(file, token, audioTrack));
         break;
       }
       case 'CANCEL':
-        // Invalidate the running job; it unwinds at its next checkpoint.
+        // Invalidate the running job so it unwinds at its next checkpoint.
+        // Cheap and correct for the common "load another file" case; a single
+        // long ffmpeg.run() still has to finish, because ffmpeg-core has no
+        // abort. Interrupting one is done by terminating this worker from the
+        // page (see resetPlayer) rather than by a message that would have to
+        // queue behind the exec it is meant to stop.
         jobSerial++;
         post('LOG', { message: 'Conversion cancelled', level: 'info' });
         break;
@@ -461,4 +580,5 @@ self.onmessage = function (e) {
   }
 };
 
+resetReady();
 loadFFmpeg();
