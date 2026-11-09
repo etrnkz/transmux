@@ -1,7 +1,7 @@
 {
   "name": "transmux",
   "version": "1.0.0",
-  "description": "Browser video player that streams legacy AVI/MKV and exports MP4, built on Rust + WebAssembly and FFmpeg.wasm. Ships as an embeddable library.",
+  "description": "Browser video player that plays legacy AVI/MKV by remuxing in WebAssembly and streams before conversion finishes. Exports real MP4. No uploads, no server.",
   "type": "module",
   "main": "wasm-video-player.js",
   "exports": {
@@ -27,14 +27,16 @@
     "test:streaming": "node test-streaming-e2e.cjs"
   },
   "keywords": [
-    "rust",
     "webassembly",
     "wasm",
     "video",
     "ffmpeg",
     "player",
     "avi",
-    "mse"
+    "mkv",
+    "mse",
+    "remux",
+    "transmux"
   ],
   "author": "etrnkz",
   "license": "MIT",

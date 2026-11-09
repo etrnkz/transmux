@@ -7,8 +7,9 @@ The name is the technique: remuxing a file into a streamable format without re-e
 
 No transcoding server, no uploads: the source file never leaves the machine.
 
-It ships two things: a standalone app (`index.html`) and the same player as an embeddable
-module (`wasm-video-player.js` + `wasm-video-player.css`) you can drop into any page — see
+It ships one player in two shapes: an embeddable module (`wasm-video-player.js` +
+`wasm-video-player.css`) you can drop into any page, and `index.html`, a host page that mounts
+that same module. There is no second copy of the playback logic — see
 [Using it as a library](#using-it-as-a-library).
 
 ## How it works
@@ -40,9 +41,12 @@ stream actually exists. There is no placeholder/demo track.
 ## Requirements
 
 - A Chromium-based browser or Firefox with `SharedArrayBuffer` support
-- Rust + `wasm-pack` — only for `index.html`, which drives the Rust `VideoProcessor` directly.
-  The embeddable library (`wasm-video-player.js`) does not need them.
 - Python 3 for the bundled dev server
+- Node.js for `npm install` / `npm run setup`
+
+No Rust toolchain is required for either shape. `src/lib.rs` is an optional
+`wasm-bindgen` shell that still builds with `npm run build:rust`, but nothing on the default
+path — neither `index.html` nor the library — uses it.
 
 ### Why the bundled server and not `python -m http.server`
 
@@ -61,28 +65,27 @@ XHR for the wasm binary hangs and "loading ffmpeg-core" never completes.
 
 ```bash
 npm install
-npm run setup     # FFmpeg core into public/, then wasm-pack build --out-dir pkg
+npm run setup     # fetch the four FFmpeg core files into public/
 npm run serve     # http://localhost:8000
 ```
 
-`npm run setup` runs both steps (`setup-ffmpeg` then `build`). Run them individually if you
-only need one — `npm run setup-ffmpeg` alone is enough for the embeddable library, which does
-not use `pkg/`.
-
-`public/` must contain `ffmpeg.js`, `ffmpeg-core.js`, `ffmpeg-core.wasm` and
-`ffmpeg-core.worker.js`. The wasm is large and gitignored — run `npm run setup-ffmpeg`
-(or download the files by hand) after a fresh clone. All four are loaded from the local
+`npm run setup` is `npm run setup-ffmpeg`: it downloads `ffmpeg.js`, `ffmpeg-core.js`,
+`ffmpeg-core.wasm` and `ffmpeg-core.worker.js` from jsDelivr. The wasm is large and
+gitignored, so this is the one step a fresh clone needs. All four are loaded from the local
 origin; there is no CDN fallback.
 
 ## Using it as a library
 
-`index.html` is one host for the player, not the player itself. The same engine is available
-as a drop-in module: **`wasm-video-player.js`** (logic) plus **`wasm-video-player.css`**
-(styling). Together they mount a complete player into any container with one call.
+`index.html` is a host for the player, not the player itself. The engine is available as a
+drop-in module: **`wasm-video-player.js`** (logic) plus **`wasm-video-player.css`** (styling).
+Together they mount a complete player into any container with one call.
+
+`index.html` is 128 lines of host glue: it imports `createPlayer()`, links the stylesheet, and
+mounts. Its markup, styling and behaviour all come from the library, so any fix to the player
+reaches both.
 
 A library consumer needs only these three files plus the four `public/` core files — no Rust
-toolchain, no `npm run build`, no `pkg/`. `pkg/` is used solely by `index.html`, which drives
-the Rust `VideoProcessor` directly.
+toolchain, no `npm run build:rust`, no `pkg/`.
 
 ```bash
 npm install transmux
@@ -147,11 +150,17 @@ player.getState()                // { file, audioTracks, selectedAudioTrack, bus
 player.on(name, fn)              // 'status' | 'log' | 'progress' | 'ready' | 'error'; returns an unsubscribe fn
 player.destroy()                 // terminate the worker and remove the UI
 player.urls                      // { worker, coreBase } as actually resolved — handy when an embed misbehaves
+player.ui                        // the DOM nodes the player created — see below
 ```
 
 `exportVideo()` is fire-and-forget: it hands the rendered MP4 to the browser as a download
 rather than returning a URL. Watch `on('status')` / `on('progress')` for completion, or
 `getState().isExporting` to know when it is running.
+
+`player.ui` exposes the generated DOM so a host can assign its own ids, attach controls or
+instrument the player without recreating the markup. `root`, `video`, `status`, `upload`,
+`videoContainer` and `progress` are the stable keys; the rest are internal and may change.
+`index.html` uses it for exactly this — see [`index.html`](./index.html).
 
 ### Hosting it
 
@@ -193,14 +202,14 @@ has been exercised.
 ## Project structure
 
 ```
-├── index.html               # Standalone host app: UI, MediaSource playback, export/subtitle wiring
-├── wasm-video-player.js     # Embeddable player library — createPlayer()
+├── index.html               # Host page: mounts the library into #app (128 lines, no player logic)
+├── wasm-video-player.js     # The player — createPlayer(), all playback logic lives here
 ├── wasm-video-player.css    # Its stylesheet, scoped under .wvp-root
 ├── quick-start.html         # Minimal page that embeds the library
 ├── ffmpeg-worker.js         # FFmpeg.wasm worker: probe, remux, chunked streaming, export
 ├── server.py                # COOP/COEP + Range dev server
-├── src/lib.rs               # Rust/wasm-bindgen shell that spawns the worker
-├── pkg/                     # wasm-pack output (gitignored, required at runtime)
+├── src/lib.rs               # Optional Rust/wasm-bindgen shell (npm run build:rust); unused by default
+├── pkg/                     # wasm-pack output for src/lib.rs (gitignored, optional)
 ├── public/                  # FFmpeg core assets (wasm is gitignored)
 ├── test-e2e.cjs              # Playwright suite: conversion, streaming, export, subtitles
 ├── test-streaming-e2e.cjs    # Playwright suite: fast remux + progressive playback
@@ -222,12 +231,17 @@ npm run test:streaming # fast-remux and instant-playback timings
 npm run test:embed     # the library mounts, applies its CSS, loads the core, and plays
 ```
 
-`test-embed.cjs` takes `BASE` and `PAGE` overrides, so the same checks run against a
-subdirectory deployment:
+All three suites honour `BASE`, so they can run against any port or host. `test-embed.cjs` also
+takes `PAGE`, so the same checks run against a subdirectory deployment:
 
 ```bash
-BASE=http://localhost:8123 PAGE=/vendor/player/v1/quick-start.html npm run test:embed
+BASE=http://localhost:8301/          npm test
+BASE=http://localhost:8301/          npm run test:streaming
+BASE=http://localhost:8301 PAGE=/vendor/player/v1/quick-start.html npm run test:embed
 ```
+
+Without `BASE`, `test-e2e` and `test-streaming` default to `http://localhost:8000/` and
+`test-embed` to `http://localhost:8123`.
 
 The suites need Playwright resolvable from the repo (`require.resolve('playwright')` — here it
 resolves via `C:/Users/user/node_modules/playwright`) and the sample media in `samples/`
