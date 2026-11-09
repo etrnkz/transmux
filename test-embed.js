@@ -98,7 +98,7 @@ const PAGE = process.env.PAGE || '/quick-start.html';
 
   // 8. Actually load a file through the player and watch it reach the stage.
   const fileInput = page.locator('.wvp-file-input');
-  await fileInput.setInputFiles('test-mpeg4.avi');
+  await fileInput.setInputFiles('samples/test-mpeg4.avi');
   try {
     await page.waitForFunction(
       () => {

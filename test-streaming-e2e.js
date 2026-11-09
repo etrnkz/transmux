@@ -19,10 +19,10 @@ const path = require('path');
   }, { timeout: 30000 });
   console.log('✅ Worker initialized!');
 
-  // TEST 1: Fast Copy on test-h264.avi
-  console.log('\n--- TEST 1: Fast Copy on test-h264.avi ---');
+  // TEST 1: Fast Copy on samples/test-h264.avi
+  console.log('\n--- TEST 1: Fast Copy on samples/test-h264.avi ---');
   const startH264 = Date.now();
-  await page.setInputFiles('#fileInput', path.resolve('test-h264.avi'));
+  await page.setInputFiles('#fileInput', path.resolve('samples/test-h264.avi'));
 
   await page.waitForFunction(() => {
     const el = document.getElementById('status');
@@ -35,10 +35,10 @@ const path = require('path');
   await page.evaluate(() => window.resetPlayer());
   await new Promise(r => setTimeout(r, 500));
 
-  // TEST 2: Live Progressive Streaming on test-mpeg4.avi
-  console.log('\n--- TEST 2: Live Progressive Streaming on test-mpeg4.avi ---');
+  // TEST 2: Live Progressive Streaming on samples/test-mpeg4.avi
+  console.log('\n--- TEST 2: Live Progressive Streaming on samples/test-mpeg4.avi ---');
   const startMpeg4 = Date.now();
-  await page.setInputFiles('#fileInput', path.resolve('test-mpeg4.avi'));
+  await page.setInputFiles('#fileInput', path.resolve('samples/test-mpeg4.avi'));
 
   // Verify playback starts on the very first chunk without waiting!
   console.log('⏳ Waiting for live streaming playback to start...');

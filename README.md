@@ -182,6 +182,7 @@ has been exercised.
 ├── test-e2e.js              # Playwright suite: conversion, streaming, export, subtitles
 ├── test-streaming-e2e.js    # Playwright suite: fast remux + progressive playback
 ├── test-embed.js            # Playwright suite: library embedding (12 checks)
+├── samples/                 # Sample .avi/.mkv/.mp4 fixtures used by the test suites
 ├── quick-test.html          # Environment diagnostics (isolation, SAB, MSE, wasm MIME, worker load)
 └── TROUBLESHOOTING.md
 ```
@@ -206,7 +207,7 @@ BASE=http://localhost:8123 PAGE=/vendor/player/v1/quick-start.html npm run test:
 ```
 
 The suites need Playwright resolvable from the repo (`require.resolve('playwright')` — here it
-resolves via `C:/Users/user/node_modules/playwright`) and the sample media in the repo root
+resolves via `C:/Users/user/node_modules/playwright`) and the sample media in `samples/`
 (`test-sample.avi`, `test-30s.avi`, `test-h264.avi`, …).
 
 If conversion fails before any test can run, open `http://localhost:8000/quick-test.html` first — it

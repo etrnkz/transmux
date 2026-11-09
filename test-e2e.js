@@ -69,7 +69,7 @@ async function load(page, file) {
 
   // ---------------------------------------------------------------- 1. AVI -> MP4
   console.log('--- 1. AVI (mpeg4) converts and plays ---');
-  await load(page, 'test-sample.avi');
+  await load(page, 'samples/test-sample.avi');
   const avi = await page.evaluate(() => {
     const v = document.getElementById('videoPlayer');
     return {
@@ -85,7 +85,7 @@ async function load(page, file) {
 
   // ------------------------------------------------- 2. Live streaming reaches MSE
   console.log('\n--- 2. Long AVI streams progressively into MediaSource ---');
-  await load(page, 'test-30s.avi');
+  await load(page, 'samples/test-30s.avi');
   const streamed = await page.evaluate(() => {
     const v = document.getElementById('videoPlayer');
     return {
@@ -187,7 +187,7 @@ async function load(page, file) {
   // ------------------------------------- 5. Fast remux path for H.264 in AVI
   console.log('\n--- 5. H.264 inside AVI takes the instant remux path ---');
   const t0 = Date.now();
-  await page.setInputFiles('#fileInput', path.resolve('test-h264.avi'));
+  await page.setInputFiles('#fileInput', path.resolve('samples/test-h264.avi'));
   await waitSettled(page, 60000);
   const elapsed = Date.now() - t0;
   const fast = await page.evaluate(() => ({
@@ -201,7 +201,7 @@ async function load(page, file) {
 
   // ------------------------------------- 5b. MKV is not handed to <video> raw
   console.log('\n--- 5b. MKV (H.264) also remuxes instead of failing natively ---');
-  await page.setInputFiles('#fileInput', path.resolve('test-sample.mkv'));
+  await page.setInputFiles('#fileInput', path.resolve('samples/test-sample.mkv'));
   await waitSettled(page, 60000);
   const mkv = await page.evaluate(() => {
     const v = document.getElementById('videoPlayer');
@@ -217,7 +217,7 @@ async function load(page, file) {
 
   // ------------------------------------- 5c. H.265/AC-3 MKV streams
   console.log('\n--- 5c. H.265 + AC-3 MKV falls back to progressive streaming ---');
-  await page.setInputFiles('#fileInput', path.resolve('test-hevc-ac3.mkv'));
+  await page.setInputFiles('#fileInput', path.resolve('samples/test-hevc-ac3.mkv'));
   await waitSettled(page, 240000);
   const hevc = await page.evaluate(() => {
     const v = document.getElementById('videoPlayer');
@@ -230,7 +230,7 @@ async function load(page, file) {
 
   // -------------------------------------------- 6. Reset cancels in flight work
   console.log('\n--- 6. Reset stops an in-flight conversion ---');
-  await page.setInputFiles('#fileInput', path.resolve('test-30s.avi'));
+  await page.setInputFiles('#fileInput', path.resolve('samples/test-30s.avi'));
   await page.waitForTimeout(1500);
   await page.evaluate(() => window.resetPlayer());
   const afterReset = await page.evaluate(() => ({
