@@ -20,7 +20,7 @@
     "serve-basic": "python -m http.server 8000",
     "dev": "npm run build && npm run serve",
     "clean": "rm -rf pkg target",
-    "setup-ffmpeg": "node setup-local-ffmpeg.js",
+    "setup-ffmpeg": "node setup-local-ffmpeg.cjs",
     "setup": "npm run setup-ffmpeg && npm run build",
     "test": "node test-e2e.cjs",
     "test:embed": "node test-embed.cjs",
