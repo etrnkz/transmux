@@ -1,7 +1,8 @@
 {
-  "name": "wasm-video-player",
+  "name": "transmux",
   "version": "1.0.0",
-  "description": "Web-based video player using Rust + WebAssembly and FFmpeg.wasm to stream AVI/MKV playback live and export MP4",
+  "description": "Browser video player that streams legacy AVI/MKV and exports MP4, built on Rust + WebAssembly and FFmpeg.wasm. Ships as an embeddable library.",
+  "type": "module",
   "main": "wasm-video-player.js",
   "exports": {
     ".": "./wasm-video-player.js",
@@ -21,9 +22,9 @@
     "clean": "rm -rf pkg target",
     "setup-ffmpeg": "node setup-local-ffmpeg.js",
     "setup": "npm run setup-ffmpeg && npm run build",
-    "test": "node test-e2e.js",
-    "test:embed": "node test-embed.js",
-    "test:streaming": "node test-streaming-e2e.js"
+    "test": "node test-e2e.cjs",
+    "test:embed": "node test-embed.cjs",
+    "test:streaming": "node test-streaming-e2e.cjs"
   },
   "keywords": [
     "rust",

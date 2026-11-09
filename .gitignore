@@ -27,6 +27,9 @@ Thumbs.db
 dist/
 build/
 
+# npm pack output
+*.tgz
+
 # Logs
 *.log
 

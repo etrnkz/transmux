@@ -4,7 +4,7 @@
  * Asserts on real observable state (video element, blob bytes, DOM), never on
  * incidental copy. Run with the dev server up:  python server.py 8000
  *
- *   node test-e2e.js
+ *   node test-e2e.cjs
  */
 const { chromium } = require('C:/Users/user/.agents/skills/playwright/node_modules/playwright');
 const path = require('path');

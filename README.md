@@ -1,7 +1,9 @@
-# WASM Video Player
+# transmux
 
 An in-browser video player that plays containers Chrome cannot open natively (AVI, MKV) by
 converting them with real **FFmpeg.wasm** — and starts playback before the conversion finishes.
+
+The name is the technique: remuxing a file into a streamable format without re-encoding it.
 
 No transcoding server, no uploads: the source file never leaves the machine.
 
@@ -77,6 +79,23 @@ as a drop-in module: **`wasm-video-player.js`** (logic) plus **`wasm-video-playe
 A library consumer needs only these three files plus the four `public/` core files — no Rust
 toolchain, no `npm run build`, no `pkg/`. `pkg/` is used solely by `index.html`, which drives
 the Rust `VideoProcessor` directly.
+
+```bash
+npm install transmux
+```
+
+```js
+import { createPlayer } from 'transmux';
+import 'transmux/stylesheet';
+
+createPlayer({
+  container:   document.getElementById('player'),
+  workerUrl:   '/vendor/transmux/ffmpeg-worker.js',
+  coreBaseUrl: '/vendor/transmux/public'
+});
+```
+
+Or copy the files in directly and import by path — no bundler required:
 
 ```html
 <link rel="stylesheet" href="./wasm-video-player.css">
@@ -179,9 +198,9 @@ has been exercised.
 ├── src/lib.rs               # Rust/wasm-bindgen shell that spawns the worker
 ├── pkg/                     # wasm-pack output (gitignored, required at runtime)
 ├── public/                  # FFmpeg core assets (wasm is gitignored)
-├── test-e2e.js              # Playwright suite: conversion, streaming, export, subtitles
-├── test-streaming-e2e.js    # Playwright suite: fast remux + progressive playback
-├── test-embed.js            # Playwright suite: library embedding (12 checks)
+├── test-e2e.cjs              # Playwright suite: conversion, streaming, export, subtitles
+├── test-streaming-e2e.cjs    # Playwright suite: fast remux + progressive playback
+├── test-embed.cjs            # Playwright suite: library embedding (12 checks)
 ├── samples/                 # Sample .avi/.mkv/.mp4 fixtures used by the test suites
 ├── quick-test.html          # Environment diagnostics (isolation, SAB, MSE, wasm MIME, worker load)
 └── TROUBLESHOOTING.md
@@ -199,7 +218,7 @@ npm run test:streaming # fast-remux and instant-playback timings
 npm run test:embed     # the library mounts, applies its CSS, loads the core, and plays
 ```
 
-`test-embed.js` takes `BASE` and `PAGE` overrides, so the same checks run against a
+`test-embed.cjs` takes `BASE` and `PAGE` overrides, so the same checks run against a
 subdirectory deployment:
 
 ```bash
