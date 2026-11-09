@@ -40,7 +40,8 @@ stream actually exists. There is no placeholder/demo track.
 ## Requirements
 
 - A Chromium-based browser or Firefox with `SharedArrayBuffer` support
-- Rust + `wasm-pack` (only to rebuild the WASM module)
+- Rust + `wasm-pack` — only for `index.html`, which drives the Rust `VideoProcessor` directly.
+  The embeddable library (`wasm-video-player.js`) does not need them.
 - Python 3 for the bundled dev server
 
 ### Why the bundled server and not `python -m http.server`
@@ -60,10 +61,13 @@ XHR for the wasm binary hangs and "loading ffmpeg-core" never completes.
 
 ```bash
 npm install
-npm run setup     # downloads the FFmpeg 0.11.x core into public/
-npm run build     # wasm-pack build --target web --out-dir pkg
+npm run setup     # FFmpeg core into public/, then wasm-pack build --out-dir pkg
 npm run serve     # http://localhost:8000
 ```
+
+`npm run setup` runs both steps (`setup-ffmpeg` then `build`). Run them individually if you
+only need one — `npm run setup-ffmpeg` alone is enough for the embeddable library, which does
+not use `pkg/`.
 
 `public/` must contain `ffmpeg.js`, `ffmpeg-core.js`, `ffmpeg-core.wasm` and
 `ffmpeg-core.worker.js`. The wasm is large and gitignored — run `npm run setup-ffmpeg`
