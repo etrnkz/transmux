@@ -15,13 +15,13 @@
     "ffmpeg-worker.js"
   ],
   "scripts": {
-    "build": "wasm-pack build --target web --out-dir pkg",
+    "setup": "npm run setup-ffmpeg",
+    "setup-ffmpeg": "node setup-local-ffmpeg.cjs",
     "serve": "python server.py 8000",
     "serve-basic": "python -m http.server 8000",
-    "dev": "npm run build && npm run serve",
+    "dev": "npm run serve",
+    "build:rust": "wasm-pack build --target web --out-dir pkg",
     "clean": "rm -rf pkg target",
-    "setup-ffmpeg": "node setup-local-ffmpeg.cjs",
-    "setup": "npm run setup-ffmpeg && npm run build",
     "test": "node test-e2e.cjs",
     "test:embed": "node test-embed.cjs",
     "test:streaming": "node test-streaming-e2e.cjs"
@@ -36,13 +36,17 @@
     "avi",
     "mse"
   ],
-  "author": "",
+  "author": "etrnkz",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/etrnkz/transmux.git"
+  },
+  "homepage": "https://github.com/etrnkz/transmux#readme",
+  "bugs": {
+    "url": "https://github.com/etrnkz/transmux/issues"
+  },
   "devDependencies": {
     "wasm-pack": "^0.12.1"
-  },
-  "dependencies": {
-    "@ffmpeg/core": "^0.12.10",
-    "@ffmpeg/ffmpeg": "^0.12.15"
   }
 }

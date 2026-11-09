@@ -1,6 +1,8 @@
 const { chromium } = require('C:/Users/user/.agents/skills/playwright/node_modules/playwright');
 const path = require('path');
 
+const BASE = process.env.BASE || 'http://localhost:8000/';
+
 (async () => {
   console.log('🚀 Starting Verification Test for Live Progressive Streaming & Fast Copy...');
   const browser = await chromium.launch({ headless: true });
@@ -10,8 +12,8 @@ const path = require('path');
   page.on('console', msg => console.log(`[Browser Console] ${msg.text()}`));
   page.on('pageerror', err => console.error(`[Browser PageError] ${err.message}`));
 
-  console.log('📡 Navigating to http://localhost:8000/ ...');
-  await page.goto('http://localhost:8000/');
+  console.log(`📡 Navigating to ${BASE} ...`);
+  await page.goto(BASE);
 
   await page.waitForFunction(() => {
     const el = document.getElementById('ffmpegStatusText');

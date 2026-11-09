@@ -987,7 +987,14 @@ export function createPlayer(options = {}) {
             if (ui.root && ui.root.parentElement) ui.root.parentElement.removeChild(ui.root);
         },
         /** Resolved URLs, for debugging an embedding. */
-        urls: { worker: resolvedWorkerUrl, coreBase: coreBaseUrl }
+        urls: { worker: resolvedWorkerUrl, coreBase: coreBaseUrl },
+        /**
+         * The generated DOM nodes, for hosts that need to reference them
+         * (stable ids, custom controls, instrumentation). Keys are internal
+         * names; they are not a stability contract beyond the common ones:
+         * root, video, status, upload, videoContainer, progress.
+         */
+        ui
     };
 }
 

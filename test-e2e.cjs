@@ -9,7 +9,7 @@
 const { chromium } = require('C:/Users/user/.agents/skills/playwright/node_modules/playwright');
 const path = require('path');
 
-const BASE = 'http://localhost:8000/';
+const BASE = process.env.BASE || 'http://localhost:8000/';
 let failures = 0;
 
 function check(name, ok, detail) {
