@@ -74,6 +74,10 @@ origin; there is no CDN fallback.
 as a drop-in module: **`wasm-video-player.js`** (logic) plus **`wasm-video-player.css`**
 (styling). Together they mount a complete player into any container with one call.
 
+A library consumer needs only these three files plus the four `public/` core files — no Rust
+toolchain, no `npm run build`, no `pkg/`. `pkg/` is used solely by `index.html`, which drives
+the Rust `VideoProcessor` directly.
+
 ```html
 <link rel="stylesheet" href="./wasm-video-player.css">
 
