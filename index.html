@@ -307,6 +307,29 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            /* Wraps instead of overflowing once the optional controls appear */
+            flex-wrap: wrap;
+            row-gap: 8px;
+        }
+
+        /* Narrow screens cannot fit the subtitle/audio/rate/export row, so stack
+           the toolbar instead of letting the two groups squeeze each other into
+           uneven, vertically-centred rows. */
+        @media (max-width: 600px) {
+            .toolbar {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+
+            .controls-group {
+                justify-content: flex-start;
+            }
+
+            .track-select,
+            .rate-select {
+                max-width: 100%;
+            }
         }
 
         .control-btn {
@@ -336,6 +359,61 @@
 
         .control-btn svg {
             color: var(--text-muted);
+        }
+
+        /* Audio track picker — only shown when a file has more than one track */
+        .track-select {
+            display: none;
+            align-items: center;
+            padding: 6px 10px;
+            border: 1px solid var(--border-hairline);
+            background: var(--bg-raised);
+            color: var(--text-secondary);
+            border-radius: var(--radius-md);
+            font-size: 12px;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            max-width: 220px;
+            transition: background 120ms var(--ease-out), color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+        }
+
+        .track-select:hover {
+            background: var(--bg-active);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .track-select:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        /* Playback rate — deliberately narrow, it holds short values only */
+        .rate-select {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 8px;
+            border: 1px solid var(--border-hairline);
+            background: var(--bg-raised);
+            color: var(--text-secondary);
+            border-radius: var(--radius-md);
+            font-size: 12px;
+            font-weight: 500;
+            font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+            cursor: pointer;
+            transition: background 120ms var(--ease-out), color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+        }
+
+        .rate-select:hover {
+            background: var(--bg-active);
+            color: var(--text-primary);
+            border-color: var(--border-subtle);
+        }
+
+        .rate-select:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
         }
 
         /* Inspector / Telemetry Drawer */
@@ -478,6 +556,15 @@
                             </svg>
                             <span>Subtitles</span>
                         </button>
+                        <select class="track-select" id="audioTrackSelect" aria-label="Audio track" onchange="selectAudioTrack(this.value)"></select>
+                        <select class="rate-select" id="rateSelect" aria-label="Playback speed" onchange="setPlaybackRate(this.value)" disabled title="Load a video to change playback speed">
+                            <option value="0.5">0.5×</option>
+                            <option value="0.75">0.75×</option>
+                            <option value="1" selected>1×</option>
+                            <option value="1.25">1.25×</option>
+                            <option value="1.5">1.5×</option>
+                            <option value="2">2×</option>
+                        </select>
                         <button class="control-btn" onclick="downloadProcessed()">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -547,6 +634,41 @@
         // True when convertedVideoUrl is a remuxed, complete MP4 blob we can
         // hand straight to the downloader without re-encoding.
         let isFastCopyExport = false;
+
+        // Audio tracks reported by the worker for the current file, and the one
+        // the user picked. -1 means "this file has no audio".
+        let audioTracks = [];
+        let selectedAudioTrack = 0;
+
+        // True while a conversion/export/stream is actually running in the
+        // worker. Only then is it worth paying the ~1.5s core reload to
+        // interrupt it — ffmpeg-core cannot abort a running exec, so the only
+        // real interruption is terminating the worker.
+        let workerBusy = false;
+
+        function spawnWorker() {
+            const w = new Worker('./ffmpeg-worker.js');
+            attachWorkerHandlers(w);
+            worker = w;
+            return w;
+        }
+
+        function attachWorkerHandlers(w) {
+            w.onmessage = handleWorkerMessage;
+            w.onerror = (err) => appendLog(`Worker error: ${err.message || err}`, 'error');
+        }
+
+        // Terminate the worker mid-exec and start a fresh one. The token bump is
+        // implicit (a new worker starts with a clean queue), so nothing from the
+        // abandoned job can post a result into the new session.
+        function interruptWorker() {
+            const stale = worker;
+            workerBusy = false;
+            worker = null;
+            try { if (stale) stale.terminate(); } catch (_) {}
+            spawnWorker();
+            appendLog('Restarted FFmpeg worker to interrupt the running job', 'info');
+        }
 
         function cleanupMediaSource() {
             if (activeMediaSource && activeMediaSource.readyState === 'open') {
@@ -643,14 +765,21 @@
 
                 setTimeout(() => {
                     try {
-                        worker = videoProcessor.get_worker();
-                        if (worker) {
-                            worker.onmessage = handleWorkerMessage;
-                            worker.onerror = (err) => appendLog(`Worker error: ${err.message || err}`, 'error');
+                        // The Rust layer owns the first worker. Keep it: spawning
+                        // our own would load the 23 MB core a second time.
+                        const rustWorker = videoProcessor.get_worker();
+                        if (rustWorker) {
+                            worker = rustWorker;
+                            attachWorkerHandlers(worker);
                             appendLog('Worker message handlers set up', 'success');
+                        } else {
+                            throw new Error('no worker handle');
                         }
                     } catch (e) {
-                        appendLog('Could not attach to worker: ' + e.message, 'warn');
+                        // No Rust worker available — own it in JS from the start,
+                        // which is also the path used after an interrupt.
+                        appendLog('Falling back to a JS-managed worker: ' + e.message, 'warn');
+                        spawnWorker();
                     }
                 }, 200);
 
@@ -682,9 +811,14 @@
                     document.getElementById('ffmpegStatus').className = 'status-pill success';
                     break;
                 case 'PROGRESS':
+                    workerBusy = true;
                     updateProgress(data);
                     break;
+                case 'AUDIO_TRACKS':
+                    setAudioTracks(data.tracks || [], data.selected);
+                    break;
                 case 'STREAM_START':
+                    workerBusy = true;
                     cleanupMediaSource();
                     showVideoContainer();
 
@@ -732,6 +866,7 @@
                     break;
 
                 case 'STREAM_END':
+                    workerBusy = false;
                     showStatus(data.note || 'Entire video converted and ready', 'success');
                     appendLog(data.note || 'Successfully converted video and buffered all streams', 'success');
 
@@ -753,6 +888,7 @@
                     break;
 
                 case 'VIDEO_READY':
+                    workerBusy = false;
                     if (data.url) {
                         const video = document.getElementById('videoPlayer');
                         showVideoContainer();
@@ -813,6 +949,7 @@
                     break;
                 case 'EXPORT_STATUS':
                     isExporting = true;
+                    workerBusy = true;
                     showProgress();
                     if (typeof data.progress === 'number') {
                         updateProgress({ progress: data.progress, status: data.message });
@@ -825,6 +962,7 @@
                     break;
                 case 'EXPORT_READY':
                     isExporting = false;
+                    workerBusy = false;
                     hideProgress();
                     if (pendingExportUrl) { try { URL.revokeObjectURL(pendingExportUrl); } catch (_) {} }
                     pendingExportUrl = data.url;
@@ -834,6 +972,7 @@
                     break;
                 case 'ERROR':
                     isExporting = false;
+                    workerBusy = false;
                     showStatus(data.message || 'Processing error', 'error');
                     appendLog('Error: ' + (data.message || 'Unknown'), 'error');
                     hideProgress();
@@ -877,13 +1016,20 @@
 
             appendLog(`File: ${file.name} (${sizeMB} MB, ${ext.toUpperCase()})`, 'info');
 
-            // Supersede any conversion still running for the previous file.
+            // Supersede any conversion still running for the previous file. If one
+            // is mid-exec it cannot be interrupted by a message, so restart the
+            // worker instead of letting the new file queue behind it.
             if (worker) {
-                try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
+                if (workerBusy) {
+                    interruptWorker();
+                } else {
+                    try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
+                }
             }
 
             currentFile = file;
             isExporting = false;
+            workerBusy = false;
 
             const video = document.getElementById('videoPlayer');
             cleanupMediaSource();
@@ -891,6 +1037,8 @@
             if (subtitleTrackUrl) { URL.revokeObjectURL(subtitleTrackUrl); subtitleTrackUrl = null; }
             document.querySelectorAll('#videoPlayer track').forEach(t => t.remove());
             setSubtitleButtonState(false);
+            resetAudioTracks();
+            setRateControlState(true);
             isFastCopyExport = false;
             if (currentPreviewUrl) { URL.revokeObjectURL(currentPreviewUrl); currentPreviewUrl = null; }
             if (currentVideoUrl) { URL.revokeObjectURL(currentVideoUrl); currentVideoUrl = null; }
@@ -917,11 +1065,13 @@
 
             if (worker) {
                 showProgress();
+                workerBusy = true;
                 appendLog('Starting FFmpeg conversion pipeline...', 'info');
                 try {
-                    worker.postMessage({ type: 'PROCESS_VIDEO', file });
+                    worker.postMessage({ type: 'PROCESS_VIDEO', file, audioTrack: selectedAudioTrack });
                     worker.postMessage({ type: 'EXTRACT_SUBTITLES', file });
                 } catch (e) {
+                    workerBusy = false;
                     appendLog('Worker post failed: ' + e.message, 'error');
                     hideProgress();
                 }
@@ -961,6 +1111,123 @@
             btn.disabled = !available;
             btn.title = available ? 'Toggle subtitles' : 'This file has no subtitles';
         }
+
+        // The rate control only makes sense once something is loaded, so it follows
+        // the same enable/disable rhythm as the subtitle button.
+        function setRateControlState(enabled) {
+            const sel = document.getElementById('rateSelect');
+            if (!sel) return;
+            sel.disabled = !enabled;
+            sel.title = enabled ? 'Playback speed' : 'Load a video to change playback speed';
+            if (!enabled) {
+                sel.value = '1';
+                const video = document.getElementById('videoPlayer');
+                if (video) {
+                    video.defaultPlaybackRate = 1;
+                    video.playbackRate = 1;
+                }
+            }
+        }
+
+        // Rate is a property of the <video> element, so it survives chunk
+        // appends; defaultPlaybackRate is set too because load() (used on every
+        // source swap and MediaSource hand-off) resets playbackRate from it.
+        window.setPlaybackRate = function (value) {
+            const rate = parseFloat(value);
+            const video = document.getElementById('videoPlayer');
+            if (!video || !Number.isFinite(rate) || rate <= 0) return;
+            video.defaultPlaybackRate = rate;
+            video.playbackRate = rate;
+            appendLog(`Playback speed set to ${rate}×`, 'info');
+        };
+
+        // Human label for a probed audio track, e.g. "English (aac, stereo)".
+        function describeAudioTrack(track, i) {
+            const LANG = {
+                eng: 'English', en: 'English', fra: 'French', fre: 'French', fr: 'French',
+                deu: 'German', ger: 'German', de: 'German', spa: 'Spanish', es: 'Spanish',
+                ita: 'Italian', it: 'Italian', jpn: 'Japanese', ja: 'Japanese',
+                kor: 'Korean', ko: 'Korean', zho: 'Chinese', chi: 'Chinese', zh: 'Chinese',
+                rus: 'Russian', ru: 'Russian', por: 'Portuguese', pt: 'Portuguese',
+                ara: 'Arabic', ar: 'Arabic', hin: 'Hindi', hi: 'Hindi', tha: 'Thai', th: 'Thai',
+                vie: 'Vietnamese', vi: 'Vietnamese', nld: 'Dutch', dut: 'Dutch', nl: 'Dutch',
+                pol: 'Polish', pl: 'Polish', tur: 'Turkish', tr: 'Turkish',
+                swe: 'Swedish', sv: 'Swedish', ukr: 'Ukrainian', uk: 'Ukrainian'
+            };
+            const bits = [];
+            bits.push(track && track.lang ? (LANG[track.lang] || track.lang.toUpperCase()) : `Track ${i + 1}`);
+            if (track && track.channels) bits.push(track.channels);
+            if (track && track.isDefault) bits.push('default');
+            return bits.join(' · ');
+        }
+
+        // Only surfaces the picker when a file genuinely has a choice to make, so
+        // single-track files keep the toolbar exactly as it was.
+        function setAudioTracks(tracks, selected) {
+            const sel = document.getElementById('audioTrackSelect');
+            if (!sel) return;
+
+            audioTracks = Array.isArray(tracks) ? tracks : [];
+            selectedAudioTrack = Number.isInteger(selected) && selected >= 0 ? selected : 0;
+
+            sel.innerHTML = '';
+            if (audioTracks.length < 2) {
+                sel.style.display = 'none';
+                sel.disabled = true;
+                return;
+            }
+
+            audioTracks.forEach((track, i) => {
+                const opt = document.createElement('option');
+                opt.value = String(i);
+                opt.textContent = describeAudioTrack(track, i);
+                if (i === selectedAudioTrack) opt.selected = true;
+                sel.appendChild(opt);
+            });
+            sel.disabled = false;
+            sel.style.display = 'inline-flex';
+        }
+
+        function resetAudioTracks() {
+            audioTracks = [];
+            selectedAudioTrack = 0;
+            const sel = document.getElementById('audioTrackSelect');
+            if (sel) {
+                sel.innerHTML = '';
+                sel.style.display = 'none';
+                sel.disabled = true;
+            }
+        }
+
+        // Switching tracks re-runs the pipeline from the same source file with a
+        // different audio map, which is the only way to change the encoded audio
+        // in the streamed/remuxed output.
+        window.selectAudioTrack = function (value) {
+            const index = parseInt(value, 10);
+            if (!currentFile || !worker || !Number.isInteger(index)) return;
+            if (index === selectedAudioTrack) return;
+
+            selectedAudioTrack = index;
+            appendLog(`Switching to audio track ${index + 1} (${describeAudioTrack(audioTracks[index], index)})`, 'info');
+            showStatus(`Switching audio to ${describeAudioTrack(audioTracks[index], index)}...`, 'info');
+
+            cleanupMediaSource();
+            if (convertedVideoUrl) {
+                try { URL.revokeObjectURL(convertedVideoUrl); } catch (_) {}
+                convertedVideoUrl = null;
+            }
+            isFastCopyExport = false;
+
+            showProgress();
+            workerBusy = true;
+            try {
+                worker.postMessage({ type: 'PROCESS_VIDEO', file: currentFile, audioTrack: index });
+            } catch (e) {
+                workerBusy = false;
+                appendLog('Audio switch failed: ' + e.message, 'error');
+                hideProgress();
+            }
+        };
 
         // Global controls
         window.toggleSubtitles = function () {
@@ -1013,15 +1280,21 @@
             appendLog('Rendering MP4 for export...', 'info');
             showProgress();
             document.getElementById('progressText').textContent = 'Preparing MP4 export...';
-            worker.postMessage({ type: 'EXPORT_VIDEO', file: currentFile });
+            worker.postMessage({ type: 'EXPORT_VIDEO', file: currentFile, audioTrack: selectedAudioTrack });
         };
 
         window.resetPlayer = function () {
-            // Stop any in-flight conversion so it cannot repaint the stage later.
-            if (worker) {
+            // Interrupt for real if something is encoding right now: a soft
+            // CANCEL only makes the job unwind between ffmpeg.run() calls, so a
+            // long export would keep the core busy and the next file would queue
+            // behind it. Terminating the worker is the only true abort.
+            if (worker && workerBusy) {
+                interruptWorker();
+            } else if (worker) {
                 try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
             }
             isExporting = false;
+            workerBusy = false;
             cleanupMediaSource();
 
             const video = document.getElementById('videoPlayer');
@@ -1034,6 +1307,8 @@
             document.getElementById('fileInput').value = '';
             isPlayingPreview = false;
             setSubtitleButtonState(false);
+            resetAudioTracks();
+            setRateControlState(false);
 
             if (subtitleTrackUrl) { try { URL.revokeObjectURL(subtitleTrackUrl); } catch (_) {} subtitleTrackUrl = null; }
             if (pendingExportUrl) { try { URL.revokeObjectURL(pendingExportUrl); } catch (_) {} pendingExportUrl = null; }
