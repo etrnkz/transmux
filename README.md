@@ -9,34 +9,7 @@ No transcoding server, no uploads: the source file never leaves the machine.
 
 It ships one player in two shapes: an embeddable module (`wasm-video-player.js` +
 `wasm-video-player.css`) you can drop into any page, and `index.html`, a host page that mounts
-that same module. There is no second copy of the playback logic — see
-[Using it as a library](#using-it-as-a-library).
-
-## How it works
-
-Every file goes through one worker (`ffmpeg-worker.js`) that runs a single serialised FFmpeg
-instance, so two conversions can never fight over the core.
-
-1. **Probe** — `ffmpeg -i <input>` parses the container once to learn the duration and whether
-   the video stream is already H.264.
-2. **Fast remux (H.264 sources)** — `-c:v copy -c:a aac -movflags +faststart` rewraps the
-   existing H.264 stream into MP4 without re-encoding. Typically under a second, and the
-   result is a complete file that can be downloaded as-is.
-3. **Progressive streaming (everything else)** — the source is cut into ~6-second slices, each
-   encoded to a fragmented MP4 (`-f mp4 -movflags +frag_keyframe+empty_moov+default_base_moof`,
-   `-preset ultrafast -crf 26`) and appended to a `MediaSource` in `sequence` mode. Playback
-   begins on the first slice; the rest buffer in the background.
-
-For MP4/WebM/MOV the file is handed straight to `<video>` for immediate native playback while
-the worker converts in the background, then playback swaps over to the converted stream
-without losing the current position.
-
-**Export MP4** always renders a real single-file MP4 from the source. Concatenated fMP4
-segments are a valid MSE timeline but not a valid standalone file, so they are never offered
-as a download; a fast-remuxed blob is reused directly when one exists.
-
-**Subtitles** are extracted from the source (`-map 0:s:0 -c:s webvtt`) only when a subtitle
-stream actually exists. There is no placeholder/demo track.
+that same module. There is no second copy of the playback logic.
 
 ## Requirements
 
@@ -44,22 +17,7 @@ stream actually exists. There is no placeholder/demo track.
 - Python 3 for the bundled dev server
 - Node.js for `npm install` / `npm run setup`
 
-No Rust toolchain is required for either shape. `src/lib.rs` is an optional
-`wasm-bindgen` shell that still builds with `npm run build:rust`, but nothing on the default
-path — neither `index.html` nor the library — uses it.
-
-### Why the bundled server and not `python -m http.server`
-
-`server.py` exists because the app needs four things a plain static server does not provide:
-
-- `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy` headers, which make the page
-  cross-origin isolated so `SharedArrayBuffer` (and therefore FFmpeg's pthread core) works.
-- `application/wasm` MIME type on the core binary, or streaming compilation fails.
-- HTTP Range support, so a directly-played file can seek before it fully downloads.
-- Threading, so the ~23 MB wasm and the video file do not block the worker's chunk requests.
-
-It deliberately speaks **HTTP/1.0**: with HTTP/1.1 keep-alive enabled, Emscripten's synchronous
-XHR for the wasm binary hangs and "loading ffmpeg-core" never completes.
+No Rust toolchain is required for either shape.
 
 ## Quick start
 
@@ -69,23 +27,18 @@ npm run setup     # fetch the four FFmpeg core files into public/
 npm run serve     # http://localhost:8000
 ```
 
-`npm run setup` is `npm run setup-ffmpeg`: it downloads `ffmpeg.js`, `ffmpeg-core.js`,
-`ffmpeg-core.wasm` and `ffmpeg-core.worker.js` from jsDelivr. The wasm is large and
-gitignored, so this is the one step a fresh clone needs. All four are loaded from the local
-origin; there is no CDN fallback.
+`npm run setup` downloads `ffmpeg.js`, `ffmpeg-core.js`, `ffmpeg-core.wasm` and
+`ffmpeg-core.worker.js` from jsDelivr. The wasm is large and gitignored, so this is the one
+step a fresh clone needs. All four are loaded from the local origin; there is no CDN fallback.
 
 ## Using it as a library
 
-`index.html` is a host for the player, not the player itself. The engine is available as a
-drop-in module: **`wasm-video-player.js`** (logic) plus **`wasm-video-player.css`** (styling).
-Together they mount a complete player into any container with one call.
+`index.html` is a host for the player, not the player itself. The engine is a drop-in module:
+`wasm-video-player.js` (logic) plus `wasm-video-player.css` (styling). Together they mount a
+complete player into any container with one call.
 
-`index.html` is 128 lines of host glue: it imports `createPlayer()`, links the stylesheet, and
-mounts. Its markup, styling and behaviour all come from the library, so any fix to the player
-reaches both.
-
-A library consumer needs only these three files plus the four `public/` core files — no Rust
-toolchain, no `npm run build:rust`, no `pkg/`.
+A consumer needs only those three files plus the four `public/` core files — no Rust toolchain,
+no `pkg/`, no build step.
 
 ```bash
 npm install transmux
@@ -95,32 +48,15 @@ npm install transmux
 import { createPlayer } from 'transmux';
 import 'transmux/stylesheet';
 
-createPlayer({
+const player = createPlayer({
   container:   document.getElementById('player'),
   workerUrl:   '/vendor/transmux/ffmpeg-worker.js',
   coreBaseUrl: '/vendor/transmux/public'
 });
 ```
 
-Or copy the files in directly and import by path — no bundler required:
-
-```html
-<link rel="stylesheet" href="./wasm-video-player.css">
-
-<div id="player"></div>
-
-<script type="module">
-  import { createPlayer } from './wasm-video-player.js';
-
-  const player = createPlayer({
-    container:   document.getElementById('player'),
-    workerUrl:   './ffmpeg-worker.js',   // this repo's worker
-    coreBaseUrl: './public'              // holds ffmpeg.js + the ffmpeg-core files
-  });
-</script>
-```
-
-`quick-start.html` is a complete working page that does exactly this and nothing else.
+You can also copy the files in and import by path — no bundler required. See
+[`quick-start.html`](./quick-start.html) for a complete working page.
 
 ### Options
 
@@ -129,7 +65,7 @@ Or copy the files in directly and import by path — no bundler required:
 | `container` | — | **Required.** Element to mount into. |
 | `videoEl` | created for you | Existing `<video>` element to drive instead of a new one. |
 | `workerUrl` | `./ffmpeg-worker.js` | Path to the worker. Resolved against `document.baseURI`. |
-| `coreBaseUrl` | worker's `./public` sibling | Directory holding `ffmpeg.js`, `ffmpeg-core.js`, `ffmpeg-core.wasm`, `ffmpeg-core.worker.js`. |
+| `coreBaseUrl` | worker's `./public` sibling | Directory holding the four FFmpeg core files. |
 | `fileInputId` | generated | `id` for the hidden file input. |
 | `title` | `WASM Video Player` | Heading text. `''` hides the whole header. |
 | `subtitle` | `Real-time WebAssembly demuxing & live playback` | Secondary heading. |
@@ -149,8 +85,8 @@ player.clearLog()
 player.getState()                // { file, audioTracks, selectedAudioTrack, busy, isExporting, hasConvertedFile }
 player.on(name, fn)              // 'status' | 'log' | 'progress' | 'ready' | 'error'; returns an unsubscribe fn
 player.destroy()                 // terminate the worker and remove the UI
-player.urls                      // { worker, coreBase } as actually resolved — handy when an embed misbehaves
-player.ui                        // the DOM nodes the player created — see below
+player.urls                      // { worker, coreBase } as actually resolved
+player.ui                        // the DOM nodes the player created
 ```
 
 `exportVideo()` is fire-and-forget: it hands the rendered MP4 to the browser as a download
@@ -160,7 +96,6 @@ rather than returning a URL. Watch `on('status')` / `on('progress')` for complet
 `player.ui` exposes the generated DOM so a host can assign its own ids, attach controls or
 instrument the player without recreating the markup. `root`, `video`, `status`, `upload`,
 `videoContainer` and `progress` are the stable keys; the rest are internal and may change.
-`index.html` uses it for exactly this — see [`index.html`](./index.html).
 
 ### Hosting it
 
@@ -172,8 +107,7 @@ Three things must hold wherever the player is served from:
 2. **The core assets must be reachable.** Point `coreBaseUrl` at wherever you copied
    `public/`, or keep the default layout (a `public/` directory next to the worker).
 3. **Not necessarily the site root.** All paths are resolved from the worker's own URL, so the
-   player runs unchanged from `/vendor/player/v1/` or even a different origin. Host pages that
-   deliberately omit `coreBaseUrl` fall back to that self-resolution.
+   player runs unchanged from `/vendor/player/v1/` or even a different origin.
 
 The stylesheet is scoped under `.wvp-root`, so it neither leaks into nor inherits from the host
 page; load it and the player takes care of its own appearance.
@@ -198,68 +132,6 @@ page; load it and the player takes care of its own appearance.
 
 Anything FFmpeg can decode but this table omits will still be streamed; the table lists what
 has been exercised.
-
-## Project structure
-
-```
-├── index.html               # Host page: mounts the library into #app (128 lines, no player logic)
-├── wasm-video-player.js     # The player — createPlayer(), all playback logic lives here
-├── wasm-video-player.css    # Its stylesheet, scoped under .wvp-root
-├── quick-start.html         # Minimal page that embeds the library
-├── ffmpeg-worker.js         # FFmpeg.wasm worker: probe, remux, chunked streaming, export
-├── server.py                # COOP/COEP + Range dev server
-├── src/lib.rs               # Optional Rust/wasm-bindgen shell (npm run build:rust); unused by default
-├── pkg/                     # wasm-pack output for src/lib.rs (gitignored, optional)
-├── public/                  # FFmpeg core assets (wasm is gitignored)
-├── test-e2e.cjs              # Playwright suite: conversion, streaming, export, subtitles
-├── test-streaming-e2e.cjs    # Playwright suite: fast remux + progressive playback
-├── test-embed.cjs            # Playwright suite: library embedding (12 checks)
-├── samples/                 # Sample .avi/.mkv/.mp4 fixtures used by the test suites
-├── quick-test.html          # Environment diagnostics (isolation, SAB, MSE, wasm MIME, worker load)
-└── TROUBLESHOOTING.md
-```
-
-## Tests
-
-All three suites drive a real browser against the dev server and assert on observable state
-(video element, blob bytes, MP4 atoms, DOM) rather than on log strings.
-
-```bash
-npm run serve          # in one shell
-npm test               # conversion / streaming / export / subtitles / cancel / console hygiene
-npm run test:streaming # fast-remux and instant-playback timings
-npm run test:embed     # the library mounts, applies its CSS, loads the core, and plays
-```
-
-All three suites honour `BASE`, so they can run against any port or host. `test-embed.cjs` also
-takes `PAGE`, so the same checks run against a subdirectory deployment:
-
-```bash
-BASE=http://localhost:8301/          npm test
-BASE=http://localhost:8301/          npm run test:streaming
-BASE=http://localhost:8301 PAGE=/vendor/player/v1/quick-start.html npm run test:embed
-```
-
-Without `BASE`, `test-e2e` and `test-streaming` default to `http://localhost:8000/` and
-`test-embed` to `http://localhost:8123`.
-
-The suites need Playwright resolvable from the repo (`require.resolve('playwright')` — here it
-resolves via `C:/Users/user/node_modules/playwright`) and the sample media in `samples/`
-(`test-sample.avi`, `test-30s.avi`, `test-h264.avi`, …).
-
-If conversion fails before any test can run, open `http://localhost:8000/quick-test.html` first — it
-checks cross-origin isolation, `SharedArrayBuffer`, `MediaSource`, codec support, the wasm MIME type
-and whether the worker loads, which narrows the failure to environment or code.
-
-## Notes and limits
-
-- Encoding is single-threaded per chunk inside a shared FFmpeg core; expect roughly real-time
-  throughput on a laptop CPU, not GPU speed.
-- AVI and other streamed files are held in browser memory as they convert. Multi-gigabyte
-  inputs will hit the tab's memory ceiling.
-- `-preset veryfast` on the export path crashes ffmpeg-core's pthread pool with
-  `RuntimeError: function signature mismatch` on the pinned 0.11.x core. Export uses `fast`,
-  with an `ultrafast` retry if a render produces no output.
 
 ## License
 
