@@ -76,9 +76,9 @@
 }
 
 .wvp-title {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 500;
-    letter-spacing: -0.01em;
+    letter-spacing: normal;
     margin: 0;
 }
 
@@ -99,6 +99,7 @@
     border: 1px solid var(--wvp-border-hairline);
     font-size: 12px;
     font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
     color: var(--wvp-text-secondary);
 }
 
@@ -125,11 +126,11 @@
 
 .wvp-status {
     display: none;
-    padding: 10px 16px;
+    padding: 8px 16px;
     border-radius: var(--wvp-radius-md);
     font-size: 13px;
     line-height: 18px;
-    transition: all 160ms var(--wvp-ease-out);
+    transition: color 150ms var(--wvp-ease-out), background-color 150ms var(--wvp-ease-out), border-color 150ms var(--wvp-ease-out);
 }
 
 .wvp-status.info {
@@ -174,10 +175,10 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 64px 32px;
+    padding: 48px 24px;
     cursor: pointer;
     text-align: center;
-    transition: background 150ms var(--wvp-ease-out), border-color 150ms var(--wvp-ease-out);
+    transition: background-color 150ms var(--wvp-ease-out), border-color 150ms var(--wvp-ease-out);
 }
 
 .wvp-upload:hover,
@@ -193,8 +194,8 @@
 }
 
 .wvp-upload-icon {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 40px;
     border-radius: var(--wvp-radius-md);
     background: var(--wvp-bg-raised);
     border: 1px solid var(--wvp-border-hairline);
@@ -209,7 +210,7 @@
     font-size: 15px;
     font-weight: 500;
     color: var(--wvp-text-primary);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .wvp-upload-sub {
@@ -223,7 +224,7 @@
 .wvp-btn.wvp-upload-btn {
     background: var(--wvp-text-primary);
     color: var(--wvp-bg-base);
-    padding: 8px 18px;
+    padding: 8px 16px;
     border: 1px solid transparent;
 }
 
@@ -236,13 +237,14 @@
 
 .wvp-formats {
     display: flex;
-    gap: 6px;
-    margin-top: 24px;
+    gap: 8px;
+    margin-top: 20px;
 }
 
 .wvp-pill {
     font-size: 11px;
     font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
     padding: 2px 8px;
     background: var(--wvp-bg-raised);
     border: 1px solid var(--wvp-border-hairline);
@@ -292,7 +294,7 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 14px;
+    padding: 6px 12px;
     border: 1px solid var(--wvp-border-hairline);
     background: var(--wvp-bg-raised);
     color: var(--wvp-text-secondary);
@@ -301,7 +303,7 @@
     font-size: 12px;
     font-weight: 500;
     font-family: inherit;
-    transition: background 120ms var(--wvp-ease-out), color 120ms var(--wvp-ease-out), border-color 120ms var(--wvp-ease-out);
+    transition: background-color 120ms var(--wvp-ease-out), color 120ms var(--wvp-ease-out), border-color 120ms var(--wvp-ease-out), transform 80ms var(--wvp-ease-out);
 }
 
 .wvp-btn:hover {
@@ -332,7 +334,7 @@
 /* Audio track picker — only shown when a file has more than one track */
 .wvp-track-select {
     display: none;
-    padding: 6px 10px;
+    padding: 6px 12px;
     max-width: 220px;
 }
 
@@ -341,6 +343,7 @@
     display: inline-flex;
     padding: 6px 8px;
     font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
 }
 
 .wvp-select {
@@ -352,7 +355,7 @@
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 120ms var(--wvp-ease-out), color 120ms var(--wvp-ease-out), border-color 120ms var(--wvp-ease-out);
+    transition: background-color 120ms var(--wvp-ease-out), color 120ms var(--wvp-ease-out), border-color 120ms var(--wvp-ease-out);
 }
 
 .wvp-select:hover {
@@ -382,6 +385,7 @@
     align-items: center;
     font-size: 12px;
     font-family: 'SFMono-Regular', Consolas, Menlo, monospace;
+    font-variant-numeric: tabular-nums;
     color: var(--wvp-text-secondary);
     margin-bottom: 8px;
 }
@@ -414,7 +418,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 16px;
+    padding: 8px 16px;
     background: var(--wvp-bg-surface);
     border-bottom: 1px solid var(--wvp-border-hairline);
     font-size: 12px;

@@ -199,11 +199,11 @@ export function createPlayer(options = {}) {
             const header = el('header', 'wvp-header');
             const group = el('div', 'wvp-header-group');
             const h1 = el('h1', 'wvp-title');
-            h1.textContent = options.title || 'WASM Video Player';
+            h1.textContent = options.title || 'transmux';
             group.appendChild(h1);
             if (options.subtitle !== '') {
                 const sub = el('span', 'wvp-subtitle');
-                sub.textContent = options.subtitle || 'Real-time WebAssembly demuxing & live playback';
+                sub.textContent = options.subtitle || 'In-browser video remuxing and live playback';
                 group.appendChild(sub);
             }
             const pill = el('div', 'wvp-pill-status', { id: `${uid}-ffmpegStatus` });
@@ -233,9 +233,9 @@ export function createPlayer(options = {}) {
         const iconBox = el('div', 'wvp-upload-icon');
         iconBox.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
         const uploadTitle = el('div', 'wvp-upload-title');
-        uploadTitle.textContent = 'Drop video file to play';
+        uploadTitle.textContent = 'Drop video to play';
         const uploadSub = el('div', 'wvp-upload-sub');
-        uploadSub.textContent = 'Immediate live streaming for AVI, MKV, MP4, WebM, MOV';
+        uploadSub.textContent = 'Plays AVI, MKV, MP4, WebM, and MOV';
         const chooseBtn = el('button', 'wvp-btn wvp-upload-btn', { type: 'button' });
         chooseBtn.textContent = 'Choose file';
         const input = el('input', 'wvp-file-input', { type: 'file', accept: 'video/*' });
@@ -334,7 +334,7 @@ export function createPlayer(options = {}) {
             const logSection = el('div', 'wvp-log-section');
             const logHeader = el('div', 'wvp-log-header');
             const logTitle = el('span');
-            logTitle.textContent = 'FFmpeg Telemetry';
+            logTitle.textContent = 'FFmpeg telemetry';
             const clearBtn = el('button', 'wvp-btn', { type: 'button' });
             clearBtn.textContent = 'Clear';
             logHeader.append(logTitle, clearBtn);
