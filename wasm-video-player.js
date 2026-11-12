@@ -54,13 +54,36 @@ function describeAudioTrack(track, i) {
  * Build the worker URL, folding the core location into the query string. The
  * worker reads these synchronously at startup, so there is no race between its
  * automatic FFmpeg load and the configuration arriving.
+ *
+ * `threads` and `gpu` travel the same way: the worker is a classic worker that
+ * cannot be configured after it started, and the URL is the only channel the
+ * player has into it.
  */
-function buildWorkerUrl(workerUrl, coreBaseUrl) {
+function buildWorkerUrl(workerUrl, coreBaseUrl, extra) {
     const url = new URL(workerUrl, document.baseURI);
     if (coreBaseUrl) {
         url.searchParams.set('coreBase', new URL(coreBaseUrl, document.baseURI).href);
     }
+    if (extra && extra.threads) {
+        url.searchParams.set('threads', String(extra.threads));
+    }
+    if (extra && extra.gpu) {
+        url.searchParams.set('gpu', String(extra.gpu));
+    }
     return url.href;
+}
+
+/**
+ * Default number of chunk-encoding workers.
+ *
+ * ffmpeg.wasm's pthread core deadlocks in this environment, so parallelism is
+ * obtained by running several independent FFmpeg cores. The default keeps one
+ * worker per spare core, capped at four extra workers so a 16-core machine
+ * does not spawn sixteen browser workers.
+ */
+function defaultThreadCount() {
+    const cores = navigator.hardwareConcurrency || 1;
+    return 1 + Math.min(4, Math.max(1, cores - 1));
 }
 
 /**
@@ -78,6 +101,17 @@ function buildWorkerUrl(workerUrl, coreBaseUrl) {
  * @param {string} [options.subtitle]         Secondary heading text.
  * @param {boolean} [options.showLog=true]    Show the telemetry panel.
  * @param {boolean} [options.showExport=true] Show the Export MP4 button.
+ * @param {number}  [options.threads]         How many chunk-encoding workers to
+ *                                            use (1 = the historical single
+ *                                            worker). Defaults to one worker per
+ *                                            spare core, capped at 5.
+ * @param {'auto'|'on'|'off'} [options.gpu='auto']
+ *                                            'auto' uses the WebCodecs hardware
+ *                                            encoder when it is available and
+ *                                            falls back to libx264 silently,
+ *                                            'on' requires it (and reports an
+ *                                            error when it is missing),
+ *                                            'off' always uses libx264.
  * @returns {object} player API
  */
 export function createPlayer(options = {}) {
@@ -88,7 +122,18 @@ export function createPlayer(options = {}) {
 
     const workerUrl = options.workerUrl || './ffmpeg-worker.js';
     const coreBaseUrl = options.coreBaseUrl || null;
-    const resolvedWorkerUrl = buildWorkerUrl(workerUrl, coreBaseUrl);
+
+    // `threads` is the total number of chunk-encoding workers (the primary
+    // worker counts as one). Anything below 1 is clamped to 1, which keeps the
+    // original single-worker behaviour.
+    const requestedThreads = Number.parseInt(options.threads, 10);
+    const threads = Number.isFinite(requestedThreads) && requestedThreads > 0
+        ? requestedThreads
+        : defaultThreadCount();
+
+    const gpuMode = (options.gpu === 'on' || options.gpu === 'off') ? options.gpu : 'auto';
+
+    const resolvedWorkerUrl = buildWorkerUrl(workerUrl, coreBaseUrl, { threads, gpu: gpuMode });
     const showLog = options.showLog !== false;
     const showExport = options.showExport !== false;
     const uid = 'wvp' + Math.random().toString(36).slice(2, 8);
@@ -113,6 +158,18 @@ export function createPlayer(options = {}) {
 
     let audioTracks = [];
     let selectedAudioTrack = 0;
+
+    // Satellite ("chunk") workers used for parallel chunk encoding. The player
+    // owns them so their lifetime is tied to the player's and so cancelling a
+    // job can terminate them immediately.
+    let poolWorkers = [];
+    let poolPorts = [];
+
+    // Observability: which encoder produced the last chunks, and how long each
+    // chunk took. The tests use this to prove that the hardware path and the
+    // parallel path are really in play.
+    let lastEncoder = null;
+    let chunkTimings = [];
 
     // True while a conversion/export/stream is actually running in the worker.
     // Only then is it worth paying the core reload to interrupt it — ffmpeg-core
@@ -374,6 +431,99 @@ export function createPlayer(options = {}) {
         w.onerror = (err) => appendLog(`Worker error: ${err.message || err}`, 'error');
     }
 
+    // ---- satellite worker pool ------------------------------------------
+    //
+    // The primary worker asks for help when there is more than one chunk to
+    // encode. The player creates that many extra workers (each with its own
+    // FFmpeg core) and connects the primary to them with MessagePorts, so the
+    // two sides can talk directly without routing everything through here.
+
+    function buildSatelliteUrl() {
+        const url = new URL(resolvedWorkerUrl, document.baseURI);
+        url.searchParams.set('role', 'chunk');
+        return url.href;
+    }
+
+    function terminatePool() {
+        for (const w of poolWorkers) {
+            try { w.terminate(); } catch (_) {}
+        }
+        for (const port of poolPorts) {
+            try { port.close(); } catch (_) {}
+        }
+        poolWorkers = [];
+        poolPorts = [];
+    }
+
+    function handlePoolRequest(data) {
+        const count = Math.max(0, Math.min(16, Number(data && data.count) || 0));
+        if (!count || !worker || destroyed) {
+            if (worker) worker.postMessage({ type: 'POOL_CONNECT', ports: [] });
+            return;
+        }
+
+        terminatePool();
+
+        const satellites = [];
+        const ports = [];
+        let readyCount = 0;
+
+        for (let i = 0; i < count; i++) {
+            const satellite = new Worker(buildSatelliteUrl());
+            satellite.onmessage = (event) => handleSatelliteMessage(event, satellite);
+            satellite.onerror = (err) => appendLog(`Parallel worker error: ${err.message || err}`, 'warn');
+            satellites.push(satellite);
+
+            const channel = new MessageChannel();
+            ports.push(channel.port1);
+            // The satellite gets one end of the channel...
+            satellite.postMessage({ type: 'POOL_PORT', port: channel.port2 }, [channel.port2]);
+        }
+
+        poolWorkers = satellites;
+        poolPorts = ports;
+
+        const connect = () => {
+            if (!worker) return;
+            // ...and the primary worker gets the other ends.
+            worker.postMessage({ type: 'POOL_CONNECT', ports: ports.slice() }, ports.slice());
+        };
+
+        // Wait until every satellite has its FFmpeg core, then wire the
+        // primary up. The primary waits for the satellites' own CHUNK_READY
+        // before handing them any work, so this only needs the workers to
+        // exist.
+        const waitReady = (satellite, done) => {
+            const onMessage = (event) => {
+                const msg = event.data;
+                if (!msg || !msg.type) return;
+                if (msg.type === 'WORKER_READY') {
+                    satellite.removeEventListener('message', onMessage);
+                    done();
+                }
+            };
+            satellite.addEventListener('message', onMessage);
+        };
+
+        let pending = count;
+        for (const satellite of satellites) {
+            waitReady(satellite, () => {
+                readyCount++;
+                if (readyCount === count) connect();
+            });
+        }
+    }
+
+    function handleSatelliteMessage(event, satellite) {
+        const msg = event.data;
+        if (!msg || !msg.type) return;
+        // Satellites report their own progress through the primary worker;
+        // only hard failures are worth surfacing here.
+        if (msg.type === 'ERROR') {
+            appendLog(`Parallel worker error: ${msg.data && msg.data.message}`, 'warn');
+        }
+    }
+
     // Terminate the worker mid-exec and start a fresh one. The new worker starts
     // with a clean queue, so nothing from the abandoned job can post a result
     // into the new session.
@@ -382,6 +532,9 @@ export function createPlayer(options = {}) {
         workerBusy = false;
         worker = null;
         try { if (stale) stale.terminate(); } catch (_) {}
+        // The satellites are separate workers; terminating the primary does
+        // not stop them, so they are killed explicitly.
+        terminatePool();
         spawnWorker();
         appendLog('Restarted FFmpeg worker to interrupt the running job', 'info');
     }
@@ -443,10 +596,16 @@ export function createPlayer(options = {}) {
             case 'AUDIO_TRACKS':
                 setAudioTracks(data.tracks || [], data.selected);
                 break;
+            case 'POOL_REQUEST':
+                handlePoolRequest(data);
+                break;
             case 'STREAM_START': {
                 workerBusy = true;
                 cleanupMediaSource();
                 showVideoContainer();
+
+                chunkTimings = [];
+                lastEncoder = data.encoder || null;
 
                 const video = ui.video;
                 activeMediaSource = new MediaSource();
@@ -474,13 +633,26 @@ export function createPlayer(options = {}) {
                 };
 
                 showStatus('Live streaming started — playing video as it converts', 'info');
-                appendLog(`Live stream initialized (${(data.duration || 0).toFixed(1)}s total)`, 'info');
+                appendLog(
+                    `Live stream initialized (${(data.duration || 0).toFixed(1)}s total, ` +
+                    `${data.encoder === 'webcodecs' ? 'hardware encoder' : 'software encoder'})`,
+                    'info'
+                );
                 break;
             }
             case 'STREAM_CHUNK':
                 if (data.chunk) {
                     chunkQueue.push(data.chunk);
                     processNextChunk();
+
+                    if (data.encoder) lastEncoder = data.encoder;
+                    chunkTimings.push({
+                        index: data.index,
+                        encoder: data.encoder || 'wasm',
+                        ms: typeof data.ms === 'number' ? data.ms : null,
+                        startedAt: data.startedAt || null,
+                        finishedAt: data.finishedAt || null
+                    });
 
                     const video = ui.video;
                     if (data.index === 0) {
@@ -492,6 +664,7 @@ export function createPlayer(options = {}) {
                 break;
             case 'STREAM_END': {
                 workerBusy = false;
+                terminatePool();
                 showStatus(data.note || 'Entire video converted and ready', 'success');
                 appendLog(data.note || 'Successfully converted video and buffered all streams', 'success');
 
@@ -512,6 +685,8 @@ export function createPlayer(options = {}) {
             }
             case 'VIDEO_READY':
                 workerBusy = false;
+                terminatePool();
+                if (data.encoder) lastEncoder = data.encoder;
                 if (data.url) {
                     const video = ui.video;
                     showVideoContainer();
@@ -595,6 +770,7 @@ export function createPlayer(options = {}) {
             case 'ERROR':
                 isExporting = false;
                 workerBusy = false;
+                terminatePool();
                 showStatus(data.message || 'Processing error', 'error');
                 appendLog('Error: ' + (data.message || 'Unknown'), 'error');
                 hideProgress();
@@ -760,12 +936,14 @@ export function createPlayer(options = {}) {
                 interruptWorker();
             } else {
                 try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
+                terminatePool();
             }
         }
 
         currentFile = file;
         isExporting = false;
         workerBusy = false;
+        chunkTimings = [];
 
         const video = ui.video;
         cleanupMediaSource();
@@ -867,10 +1045,13 @@ export function createPlayer(options = {}) {
             interruptWorker();
         } else if (worker) {
             try { worker.postMessage({ type: 'CANCEL' }); } catch (_) {}
+            // The satellites are separate workers; stop them right away.
+            terminatePool();
         }
         isExporting = false;
         workerBusy = false;
         cleanupMediaSource();
+        chunkTimings = [];
 
         const video = ui.video;
         video.pause();
@@ -960,7 +1141,12 @@ export function createPlayer(options = {}) {
             selectedAudioTrack,
             busy: workerBusy,
             isExporting,
-            hasConvertedFile: Boolean(convertedVideoUrl)
+            hasConvertedFile: Boolean(convertedVideoUrl),
+            // Acceleration settings and what actually happened.
+            threads,
+            gpu: gpuMode,
+            encoder: lastEncoder,
+            chunkTimings: chunkTimings.slice()
         }),
         /** Subscribe to 'status' | 'log' | 'progress' | 'ready' | 'error'. */
         on: (name, fn) => {
@@ -978,6 +1164,7 @@ export function createPlayer(options = {}) {
             destroyed = true;
             try { if (worker) worker.terminate(); } catch (_) {}
             worker = null;
+            terminatePool();
             cleanupMediaSource();
             if (subtitleTrackUrl) { try { URL.revokeObjectURL(subtitleTrackUrl); } catch (_) {} }
             if (pendingExportUrl) { try { URL.revokeObjectURL(pendingExportUrl); } catch (_) {} }

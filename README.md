@@ -71,6 +71,8 @@ You can also copy the files in and import by path — no bundler required. See
 | `subtitle` | `Real-time WebAssembly demuxing & live playback` | Secondary heading. |
 | `showLog` | `true` | Show the FFmpeg telemetry panel. |
 | `showExport` | `true` | Show the Export MP4 button. |
+| `threads` | one per spare core, max 5 | How many workers encode chunks at the same time. `1` keeps everything on a single worker. |
+| `gpu` | `auto` | `auto` uses the browser's WebCodecs hardware encoder when it can and falls back to libx264, `on` requires it, `off` always uses libx264. |
 
 ### API
 

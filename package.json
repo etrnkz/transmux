@@ -12,7 +12,8 @@
   "files": [
     "wasm-video-player.js",
     "wasm-video-player.css",
-    "ffmpeg-worker.js"
+    "ffmpeg-worker.js",
+    "webcodecs-encoder.js"
   ],
   "scripts": {
     "setup": "npm run setup-ffmpeg",
@@ -24,7 +25,8 @@
     "clean": "rm -rf pkg target",
     "test": "node test-e2e.cjs",
     "test:embed": "node test-embed.cjs",
-    "test:streaming": "node test-streaming-e2e.cjs"
+    "test:streaming": "node test-streaming-e2e.cjs",
+    "test:accelerate": "node test-accelerate.cjs"
   },
   "keywords": [
     "webassembly",

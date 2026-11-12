@@ -6,8 +6,8 @@ The page could not load the FFmpeg core. Work through these in order.
 
 1. **Serve over HTTP with the bundled server.** `python -m http.server` does not send
    `Cross-Origin-Opener-Policy` / `Cross-Origin-Embedder-Policy`, so the page is not
-   cross-origin isolated, `SharedArrayBuffer` is undefined, and the pthread core cannot start.
-   Use `npm run serve` (or `python server.py 8000`).
+   cross-origin isolated, `SharedArrayBuffer` is undefined, and the FFmpeg core cannot
+   start. Use `npm run serve` (or `python server.py 8000`).
 2. **Check `public/` is populated.** All four files must exist on the served origin:
    `ffmpeg.js`, `ffmpeg-core.js`, `ffmpeg-core.wasm`, `ffmpeg-core.worker.js`.
    A fresh clone has no wasm because `*.wasm` is gitignored — run `npm run setup-ffmpeg`.
@@ -23,12 +23,12 @@ page with a 404 underneath, which is the usual cause of
 
 ## "Worker Connection Failed"
 
-- The worker is spawned by WASM (`src/lib.rs`) and attaches its handlers 200 ms after
-  init. If you see this, check the Console for the Rust-side error first.
 - `ffmpeg-worker.js` is loaded from the page origin; a stale cached copy after an edit
   shows old behaviour. Hard-reload (Ctrl+Shift+R).
 - The worker needs `public/ffmpeg-core.worker.js`. Missing it gives
   `SyntaxError: Unexpected token '<'`, because the 404 resolves to `index.html`.
+- The worker is started by `wasm-video-player.js` on page load. If it never starts, the
+  Console shows why — most often a bad `workerUrl`.
 
 ## Playback never starts for an AVI/MKV
 
@@ -42,18 +42,19 @@ page with a 404 underneath, which is the usual cause of
 
 ## Conversion is slow
 
-- Each segment is encoded on a single thread inside one shared FFmpeg core — expect
-  roughly real-time throughput on a laptop CPU.
+- The streaming path encodes in WebAssembly on the CPU, and the work is spread over
+  several encoder workers so segments are produced in parallel rather than one after
+  another.
 - The streaming path is already on `-preset ultrafast -crf 26`, the fastest useful setting.
 - H.264 sources skip encoding entirely via the remux path; if a source is H.264 but still
   slow, the container header is probably confusing the codec probe.
+- If the browser exposes WebCodecs, the video segments are encoded by the platform's
+  hardware encoder instead of WebAssembly — that is the fastest path by a wide margin.
 
 ## Export fails or produces a tiny file
 
-- The export path renders a full MP4 with `-preset fast`. `-preset veryfast` — only that
-  preset — reproduces a hard `RuntimeError: function signature mismatch` inside the pthread
-  pool and kills the core mid-render. If a render produces no output the worker retries once
-  with `ultrafast`.
+- The export path renders a full MP4 with `-preset fast`; if a render produces no output
+  the worker retries once with `ultrafast`.
 - If the log reports "Export render produced no data" after both attempts, the source most
   likely has no decodable video stream.
 
@@ -62,11 +63,6 @@ page with a 404 underneath, which is the usual cause of
 That is correct behaviour: the button only enables when the source actually contains a
 subtitle stream. The log records the reason (`No subtitles: …`). Files with no subtitle
 track never get a placeholder track.
-
-## Memory issues with large files
-
-- Streamed containers (AVI, MKV) are buffered in page memory as they convert.
-- Keep test files small; close other tabs; try a lower-resolution source.
 
 ## Browser requirements
 
