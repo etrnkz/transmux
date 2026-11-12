@@ -1,6 +1,6 @@
 {
   "name": "transmux",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Browser video player that plays legacy AVI/MKV by remuxing in WebAssembly and streams before conversion finishes. Exports real MP4. No uploads, no server.",
   "type": "module",
   "main": "wasm-video-player.js",
