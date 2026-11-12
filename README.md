@@ -34,10 +34,11 @@ step a fresh clone needs. All four are loaded from the local origin; there is no
 ## Using it as a library
 
 `index.html` is a host for the player, not the player itself. The engine is a drop-in module:
-`wasm-video-player.js` (logic) plus `wasm-video-player.css` (styling). Together they mount a
-complete player into any container with one call.
+`wasm-video-player.js` (logic) plus `wasm-video-player.css` (styling), backed by
+`ffmpeg-worker.js` and `webcodecs-encoder.js`. Together they mount a complete player into
+any container with one call.
 
-A consumer needs only those three files plus the four `public/` core files — no Rust toolchain,
+A consumer needs only those four files plus the four `public/` core files — no Rust toolchain,
 no `pkg/`, no build step.
 
 ```bash
